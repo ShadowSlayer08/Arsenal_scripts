@@ -1,0 +1,16 @@
+# Local-only bundles / artifacts (track their own repos instead)
+kali-nova.tar.gz
+*.tar.gz
+*.tgz
+*.zip
+
+# Logs & scratch
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
