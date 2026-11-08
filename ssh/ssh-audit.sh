@@ -46,7 +46,7 @@ field()   { printf '    %s%-20s%s %s\n' "${C_DIM}" "$1" "${C_RST}" "$2"; }
 section() { printf '\n%s%s== %s ==%s\n' "${C_BOLD}" "${C_C}" "$*" "${C_RST}"; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
-jesc() { local s="${1//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/ }"; printf '%s' "$s"; }
+jesc() { local s="${1//$'\r'/}"; s="${s//$'\t'/ }"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/ }"; printf '%s' "$s"; }
 
 usage() {
     cat <<EOF
@@ -129,7 +129,7 @@ probe_host() {
 
     if [[ -z "$scan" && -z "$banner" ]]; then
         if [[ ${JSON} -eq 1 ]]; then
-            printf '{"host":"%s","port":"%s","reachable":false}\n' "$(jesc "$host")" "$(jesc "$port")"
+            printf '{"tool":"ssh-audit","host":"%s","port":"%s","reachable":false,"problems":["no SSH response (host down, filtered, or not SSH)"]}\n' "$(jesc "$host")" "$(jesc "$port")"
         else
             section "${host}:${port}"; err "no SSH response (host down, filtered, or not SSH)"
         fi
@@ -192,7 +192,7 @@ probe_host() {
         local pj="" first=1 p
         for p in "${problems[@]:-}"; do [[ -z "$p" ]] && continue
             [[ $first -eq 0 ]] && pj+=","; pj+="\"$(jesc "$p")\""; first=0; done
-        printf '{"host":"%s","port":"%s","reachable":true,"banner":"%s",' \
+        printf '{"tool":"ssh-audit","host":"%s","port":"%s","reachable":true,"banner":"%s",' \
             "$(jesc "$host")" "$(jesc "$port")" "$(jesc "$banner")"
         printf '"kex":"%s","host_key_algos":"%s","ciphers":"%s","macs":"%s","problems":[%s]}\n' \
             "$(jesc "$L_kex")" "$(jesc "$L_hk")" "$(jesc "$L_enc")" "$(jesc "$L_mac")" "$pj"
@@ -261,7 +261,7 @@ audit_config() {
         local pj="" first=1 p
         for p in "${problems[@]:-}"; do [[ -z "$p" ]] && continue
             [[ $first -eq 0 ]] && pj+=","; pj+="\"$(jesc "$p")\""; first=0; done
-        printf '{"config":"%s","findings":[%s]}\n' "$(jesc "$CONFIG")" "$pj"
+        printf '{"tool":"ssh-audit","host":"%s","findings":[%s]}\n' "$(jesc "$CONFIG")" "$pj"
         return
     fi
 

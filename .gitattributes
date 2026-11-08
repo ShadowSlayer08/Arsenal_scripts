@@ -1,4 +1,5 @@
 # Shell scripts must use LF so they run on Linux/Kali regardless of checkout OS
-*.sh    text eol=lf
-*.yml   text eol=lf
-*.md    text eol=lf
+*.sh         text eol=lf
+bin/arsenal  text eol=lf
+*.yml        text eol=lf
+*.md         text eol=lf

@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+#
+# arsenal — dispatcher for the Arsenal_scripts toolkit
+# =============================================================================
+#   A thin front-end so the collection behaves like one tool:
+#       arsenal ssl   example.com
+#       arsenal ssh   --local
+#       arsenal dns   example.com
+#       arsenal http  https://example.com
+#       arsenal cve   openssh 9.2
+#       arsenal scope check 203.0.113.10
+#       arsenal ssl --json example.com | arsenal report --format md
+#   `arsenal list` shows the available tools; everything after the tool name is
+#   passed through unchanged.
+# =============================================================================
+#
+set -uo pipefail
+
+# locate the repo root (this script lives in <root>/bin/)
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+ROOT="$(cd "$SELF/.." && pwd)"
+
+# subcommand -> relative script path
+declare -A TOOLS=(
+    [ssl]="ssl/ssl-audit.sh"
+    [ssh]="ssh/ssh-audit.sh"
+    [dns]="dns/dns-audit.sh"
+    [http]="http/http-audit.sh"
+    [cve]="vuln/cve-lookup.sh"
+    [scope]="engage/scope-guard.sh"
+    [report]="lib/report.sh"
+    [install]="installers/kali-arsenal.sh"
+)
+
+# one-line descriptions for `list`
+declare -A DESC=(
+    [ssl]="TLS/SSL posture & certificate analyser"
+    [ssh]="SSH server probe & sshd_config hardening audit"
+    [dns]="DNS hygiene: SPF/DKIM/DMARC/CAA/DNSSEC/AXFR/takeover"
+    [http]="HTTP security headers, cookies, exposure probes"
+    [cve]="map service product+version to known CVEs"
+    [scope]="engagement scope allowlist & target gatekeeper"
+    [report]="build a unified report from --json output"
+    [install]="red-team tooling installer (/opt + ~/tools)"
+)
+
+if [[ -t 1 && "${NO_COLOR:-}" == "" ]]; then
+    C_RST=$'\e[0m'; C_C=$'\e[36m'; C_BOLD=$'\e[1m'; C_DIM=$'\e[2m'
+else
+    C_RST=""; C_C=""; C_BOLD=""; C_DIM=""
+fi
+
+version() { echo "arsenal toolkit — $ROOT"; }
+
+list_tools() {
+    printf '%sarsenal%s — available tools:\n\n' "$C_BOLD" "$C_RST"
+    local k
+    for k in ssl ssh dns http cve scope report install; do
+        local path="$ROOT/${TOOLS[$k]}"
+        printf '  %s%-8s%s %s\n' "$C_C" "$k" "$C_RST" "${DESC[$k]}"
+        [[ -f "$path" ]] || printf '           %s(missing: %s)%s\n' "$C_DIM" "${TOOLS[$k]}" "$C_RST"
+    done
+    printf '\nUsage: arsenal <tool> [args...]   |   arsenal list   |   arsenal help <tool>\n'
+}
+
+usage() {
+    version
+    echo
+    list_tools
+}
+
+[[ $# -eq 0 ]] && { usage; exit 2; }
+
+cmd="$1"; shift || true
+case "$cmd" in
+    list|--list)        list_tools; exit 0 ;;
+    -V|--version)       version; exit 0 ;;
+    -h|--help|help)
+        if [[ -n "${1:-}" && -n "${TOOLS[${1}]:-}" ]]; then
+            exec bash "$ROOT/${TOOLS[$1]}" --help
+        fi
+        usage; exit 0 ;;
+esac
+
+script="${TOOLS[$cmd]:-}"
+if [[ -z "$script" ]]; then
+    printf 'arsenal: unknown tool "%s"\n\n' "$cmd" >&2
+    list_tools >&2
+    exit 2
+fi
+
+target="$ROOT/$script"
+if [[ ! -f "$target" ]]; then
+    printf 'arsenal: tool "%s" not installed yet (%s)\n' "$cmd" "$script" >&2
+    exit 2
+fi
+
+exec bash "$target" "$@"

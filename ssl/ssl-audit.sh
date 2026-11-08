@@ -121,7 +121,7 @@ to_epoch() {  # <date string from openssl, e.g. "Jun  1 12:00:00 2026 GMT">
 now_epoch() { date +%s; }
 
 # JSON string escape
-jesc() { local s="${1//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/ }"; printf '%s' "$s"; }
+jesc() { local s="${1//$'\r'/}"; s="${s//$'\t'/ }"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/ }"; printf '%s' "$s"; }
 
 # ---------------------------------------------------------- per-host handler --
 audit_host() {
@@ -145,7 +145,7 @@ audit_host() {
             | openssl x509 2>/dev/null)"
     if [[ -z "$cert" ]]; then
         [[ ${JSON} -eq 1 ]] && {
-            printf '{"host":"%s","port":"%s","reachable":false,"error":"no TLS certificate / connection failed"}\n' \
+            printf '{"tool":"ssl-audit","host":"%s","port":"%s","reachable":false,"error":"no TLS certificate / connection failed","problems":["could not establish TLS / retrieve certificate"]}\n' \
                 "$(jesc "$host")" "$(jesc "$port")"
             return
         }
@@ -253,7 +253,7 @@ audit_host() {
             [[ $first -eq 0 ]] && probs_json+=","
             probs_json+="\"$(jesc "$p")\""; first=0
         done
-        printf '{"host":"%s","port":"%s","reachable":true,' "$(jesc "$host")" "$(jesc "$port")"
+        printf '{"tool":"ssl-audit","host":"%s","port":"%s","reachable":true,' "$(jesc "$host")" "$(jesc "$port")"
         printf '"subject":"%s","issuer":"%s","san":"%s",' "$(jesc "$j_subject")" "$(jesc "$j_issuer")" "$(jesc "$j_san")"
         printf '"not_before":"%s","not_after":"%s","days_to_expiry":%s,' \
             "$(jesc "$j_notbefore")" "$(jesc "$j_notafter")" "${j_days:-null}"
