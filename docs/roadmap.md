@@ -1,5 +1,9 @@
 # Roadmap
 
+Ideas for more **standalone, hand-run** helper scripts. Orchestration,
+methodology and staging stay out of scope (that's Mimir) — everything here is a
+point-tool a tester runs directly.
+
 Conventions for every script: self-contained, read-only unless clearly an
 installer, authorized-use only, human + `--json` output, exit `0`/`1`/`2`.
 
@@ -17,11 +21,12 @@ installer, authorized-use only, human + `--json` output, exit `0`/`1`/`2`.
 - **`tls/cert-expiry-monitor.sh`** — fan `ssl-audit --json` over a host list, emit only soon-to-expire/weak certs (cron + alert).
 - **extend `http-audit`** — follow + report full redirect chain, CORS misconfig, `.well-known` inventory.
 
-## Next — orchestration / glue
-- **`recon/subdomain-sweep.sh`** — passive sources (crt.sh/CT) → resolve → liveness → host list the analysers consume.
-- **`recon/port-sweep.sh`** — normalize nmap/rustscan/masscan into the shared `--json` schema.
-- **`vuln/scan-normalize.sh`** — merge Nuclei/Nikto/testssl output into the shared schema so `report.sh` consumes them too.
-- **`engage/evidence-logger.sh`** — timestamped, hashed command/output logging for the report appendix and chain-of-custody.
+## Next — optional glue / post-processing
+Each still runs by hand and stands alone; they just make results easier to reuse.
+- **`recon/subdomain-sweep.sh`** — passive sources (crt.sh/CT) → resolve → liveness → a host list you can feed the analysers.
+- **`recon/port-sweep.sh`** — wrap nmap/rustscan/masscan and print tidy `--json`.
+- **`vuln/scan-normalize.sh`** — turn Nuclei/Nikto/testssl output into the same `--json` the analysers emit.
+- **`engage/evidence-logger.sh`** — timestamped, hashed command/output logging for your notes and write-up.
 
 ## Next — active (needs scope-guard + evidence-logger first)
 - **`creds/spray-wrapper.sh`** — password-spray wrapper with built-in lockout-safety caps and scope allowlist enforcement.
