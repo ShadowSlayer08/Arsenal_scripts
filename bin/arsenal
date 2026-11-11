@@ -27,6 +27,8 @@ declare -A TOOLS=(
     [dns]="dns/dns-audit.sh"
     [http]="http/http-audit.sh"
     [cve]="vuln/cve-lookup.sh"
+    [vulndb]="vulndb/vulndb-lookup.sh"
+    [vulndb-build]="vulndb/vulndb-build.sh"
     [scope]="engage/scope-guard.sh"
     [report]="lib/report.sh"
     [install]="installers/kali-arsenal.sh"
@@ -38,7 +40,9 @@ declare -A DESC=(
     [ssh]="SSH server probe & sshd_config hardening audit"
     [dns]="DNS hygiene: SPF/DKIM/DMARC/CAA/DNSSEC/AXFR/takeover"
     [http]="HTTP security headers, cookies, exposure probes"
-    [cve]="map service product+version to known CVEs"
+    [cve]="map service product+version to CVEs (online, NVD)"
+    [vulndb]="offline CVE+exploit lookup by product+version"
+    [vulndb-build]="build/update the offline CVE+exploit DB"
     [scope]="engagement scope allowlist & target gatekeeper"
     [report]="build a unified report from --json output"
     [install]="red-team tooling installer (/opt + ~/tools)"
@@ -55,7 +59,7 @@ version() { echo "arsenal toolkit — $ROOT"; }
 list_tools() {
     printf '%sarsenal%s — available tools:\n\n' "$C_BOLD" "$C_RST"
     local k
-    for k in ssl ssh dns http cve scope report install; do
+    for k in ssl ssh dns http cve vulndb vulndb-build scope report install; do
         local path="$ROOT/${TOOLS[$k]}"
         printf '  %s%-8s%s %s\n' "$C_C" "$k" "$C_RST" "${DESC[$k]}"
         [[ -f "$path" ]] || printf '           %s(missing: %s)%s\n' "$C_DIM" "${TOOLS[$k]}" "$C_RST"

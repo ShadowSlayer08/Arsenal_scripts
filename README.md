@@ -24,7 +24,8 @@ hand, and is useful on its own — copy one onto a box and run it.
 | [`ssh/ssh-audit.sh`](ssh/ssh-audit.sh) | SSH server probe (banner, host-key fingerprints, offered KEX/cipher/MAC/host-key algos) and local `sshd_config` hardening review. |
 | [`dns/dns-audit.sh`](dns/dns-audit.sh) | DNS hygiene: SPF/DKIM/DMARC/CAA/DNSSEC, AXFR zone-transfer test, dangling-CNAME / takeover hints. |
 | [`http/http-audit.sh`](http/http-audit.sh) | HTTP security headers, cookie flags, http→https enforcement, version disclosure, sensitive-path checks. |
-| [`vuln/cve-lookup.sh`](vuln/cve-lookup.sh) | Look up CVEs for a service `product + version` (or `nmap -sV` output) via NVD, CVSS-sorted. |
+| [`vuln/cve-lookup.sh`](vuln/cve-lookup.sh) | Look up CVEs for a service `product + version` (or `nmap -sV` output) via NVD, CVSS-sorted (online). |
+| [`vulndb/`](vulndb/) | **Offline CVE + public-exploit knowledge base** (SQLite). `vulndb-build` ingests NVD/KEV/EPSS/Exploit-DB/Metasploit/nuclei; `vulndb` maps `product+version → CVE → exploit`, version-range aware. Shared read-only by **Mimir & Crucible**. See [vulndb/README.md](vulndb/README.md). |
 | [`installers/kali-arsenal.sh`](installers/kali-arsenal.sh) | Idempotent red-team tooling installer (`/opt/tools` + `~/tools`), engagement profiles, `--list`/`--health`/`--dry-run`. |
 
 Small conveniences, entirely optional — ignore them and the scripts above still

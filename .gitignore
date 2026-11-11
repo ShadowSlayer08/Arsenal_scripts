@@ -4,6 +4,18 @@ kali-nova.tar.gz
 *.tgz
 *.zip
 
+# Built vuln-DB artifacts (rebuild with vulndb-build.sh; never commit bulk data)
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite.cache/
+vulndb/*.cache/
+*.cache/
+
+# Python caches
+__pycache__/
+*.pyc
+
 # Logs & scratch
 *.log
 *.tmp
