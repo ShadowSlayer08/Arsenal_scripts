@@ -43,6 +43,7 @@ work standalone:
 | [`bin/arsenal`](bin/arsenal) | Launcher so you can type `arsenal ssl …` instead of the full path. `arsenal list`, `arsenal help <tool>`. |
 | [`engage/scope-guard.sh`](engage/scope-guard.sh) | A target allowlist you can check a host against before you touch it (`check` / `filter`), so a stray host in a list doesn't get hit. |
 | [`lib/report.sh`](lib/report.sh) | Collate the `--json` output of the analysers into one Markdown / CSV / text table when you're writing up. |
+| [`graph/graph-build.sh`](graph/graph-build.sh) | Weave analyser `--json` + the vuln DB into one knowledge graph (Finding→CVE→Exploit→CWE), enriched from the shared DB and ingestible by graphify / Mimir / Crucible. See [graph/README.md](graph/README.md). |
 
 Each analyser prints readable output or `--json` (for your own notes or
 scripting), and exits `0` clean / `1` finding(s) / `2` usage error.

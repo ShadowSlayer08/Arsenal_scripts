@@ -23,6 +23,7 @@ installer, authorized-use only, human + `--json` output, exit `0`/`1`/`2`.
 - `db/db-audit.sh` — exposed DB no-auth/default-cred/TLS (read-only).
 - `vuln/cve-lookup.sh` — service version → CVEs (NVD, CPE matching).
 - `vulndb/` — offline CVE+exploit knowledge base (shared with Mimir/Crucible).
+- `graph/` — the "red ribbon" knowledge-graph exporter (analyser --json + vuln DB → nodes/edges/graph.json; graphify/Mimir/Crucible ingestible).
 
 ## Next — analysers (read-only)
 - **`tls/cert-expiry-monitor.sh`** — fan `ssl-audit --json` over a host list, emit only soon-to-expire/weak certs (cron + alert).
@@ -35,6 +36,7 @@ Each still runs by hand and stands alone; they just make results easier to reuse
 - **`recon/port-sweep.sh`** — wrap nmap/rustscan/masscan and print tidy `--json`.
 - **`vuln/scan-normalize.sh`** — turn Nuclei/Nikto/testssl output into the same `--json` the analysers emit.
 - **`engage/evidence-logger.sh`** — timestamped, hashed command/output logging for your notes and write-up.
+- **`graph/checks.json` catalog** — the Check/Technique layer for the knowledge graph: per-check id + match-regex + protocol + CWE + ATT&CK technique, so findings anchor to `Check` and `Technique` nodes (the ATT&CK pivot Mimir wants), not just tools.
 
 ## Next — active (needs scope-guard + evidence-logger first)
 - **`creds/spray-wrapper.sh`** — password-spray wrapper with built-in lockout-safety caps and scope allowlist enforcement.
