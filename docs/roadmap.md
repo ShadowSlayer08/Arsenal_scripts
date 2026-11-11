@@ -14,12 +14,20 @@ installer, authorized-use only, human + `--json` output, exit `0`/`1`/`2`.
 - `ssl/ssl-audit.sh`, `ssh/ssh-audit.sh` — TLS & SSH analysers.
 - `dns/dns-audit.sh` — SPF/DKIM/DMARC/CAA/DNSSEC/AXFR/takeover.
 - `http/http-audit.sh` — security headers, cookies, exposure probes.
+- `smb/smb-audit.sh` — dialects/SMBv1, signing, null/guest, shares, RID/user enum.
+- `ldap/ldap-audit.sh` — anon bind, rootDSE/naming contexts, LDAPS.
+- `kerberos/kerb-audit.sh` — AS-REP roast, SPN discovery, pre-auth (opt-in).
+- `smtp/mail-audit.sh` — banner/STARTTLS, safe open-relay, VRFY/EXPN.
+- `snmp/snmp-audit.sh` — community guessing, v1/v2c/v3, sysDescr.
+- `ftp/ftp-audit.sh` — anon login, FTPS/AUTH TLS, bounce.
+- `db/db-audit.sh` — exposed DB no-auth/default-cred/TLS (read-only).
 - `vuln/cve-lookup.sh` — service version → CVEs (NVD, CPE matching).
+- `vulndb/` — offline CVE+exploit knowledge base (shared with Mimir/Crucible).
 
 ## Next — analysers (read-only)
-- **`smtp/mail-audit.sh`** — MX reachability, STARTTLS, open-relay test, banner/PTR.
 - **`tls/cert-expiry-monitor.sh`** — fan `ssl-audit --json` over a host list, emit only soon-to-expire/weak certs (cron + alert).
 - **extend `http-audit`** — follow + report full redirect chain, CORS misconfig, `.well-known` inventory.
+- **field-validate** the SMB/LDAP/Kerberos/SNMP/DB analysers against real services (they are built on nmap NSE + python fallbacks and verified for safety/syntax, but not yet live-fired against those services from this workstation).
 
 ## Next — optional glue / post-processing
 Each still runs by hand and stands alone; they just make results easier to reuse.

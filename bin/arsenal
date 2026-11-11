@@ -26,6 +26,13 @@ declare -A TOOLS=(
     [ssh]="ssh/ssh-audit.sh"
     [dns]="dns/dns-audit.sh"
     [http]="http/http-audit.sh"
+    [smb]="smb/smb-audit.sh"
+    [ldap]="ldap/ldap-audit.sh"
+    [kerberos]="kerberos/kerb-audit.sh"
+    [smtp]="smtp/mail-audit.sh"
+    [snmp]="snmp/snmp-audit.sh"
+    [ftp]="ftp/ftp-audit.sh"
+    [db]="db/db-audit.sh"
     [cve]="vuln/cve-lookup.sh"
     [vulndb]="vulndb/vulndb-lookup.sh"
     [vulndb-build]="vulndb/vulndb-build.sh"
@@ -40,6 +47,13 @@ declare -A DESC=(
     [ssh]="SSH server probe & sshd_config hardening audit"
     [dns]="DNS hygiene: SPF/DKIM/DMARC/CAA/DNSSEC/AXFR/takeover"
     [http]="HTTP security headers, cookies, exposure probes"
+    [smb]="SMB/NetBIOS: dialects, signing, null/guest, shares, users"
+    [ldap]="LDAP anon bind, rootDSE/naming contexts, LDAPS"
+    [kerberos]="Kerberos: AS-REP roast, SPN discovery, pre-auth"
+    [smtp]="SMTP banner, STARTTLS, open-relay (safe), VRFY/EXPN"
+    [snmp]="SNMP community guessing, sysDescr, v1/v2c/v3"
+    [ftp]="FTP banner, anonymous login, FTPS/AUTH TLS, bounce"
+    [db]="exposed DB (redis/mongo/mssql/…): no-auth, defaults, TLS"
     [cve]="map service product+version to CVEs (online, NVD)"
     [vulndb]="offline CVE+exploit lookup by product+version"
     [vulndb-build]="build/update the offline CVE+exploit DB"
@@ -59,7 +73,7 @@ version() { echo "arsenal toolkit — $ROOT"; }
 list_tools() {
     printf '%sarsenal%s — available tools:\n\n' "$C_BOLD" "$C_RST"
     local k
-    for k in ssl ssh dns http cve vulndb vulndb-build scope report install; do
+    for k in ssl ssh dns http smb ldap kerberos smtp snmp ftp db cve vulndb vulndb-build scope report install; do
         local path="$ROOT/${TOOLS[$k]}"
         printf '  %s%-8s%s %s\n' "$C_C" "$k" "$C_RST" "${DESC[$k]}"
         [[ -f "$path" ]] || printf '           %s(missing: %s)%s\n' "$C_DIM" "${TOOLS[$k]}" "$C_RST"
