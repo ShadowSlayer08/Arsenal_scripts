@@ -342,7 +342,7 @@ check_sender_auth() {  # <domain>
         PROBLEMS+=("SPF: ${d} ends in +all/all (permits any sender)")
     fi
     if [[ -z "$dmarc" ]]; then PROBLEMS+=("DMARC: no record for ${d} (see dns-audit)")
-    elif echo "$dmarc" | grep -qiE 'p=none'; then PROBLEMS+=("DMARC: ${d} policy p=none (monitor only, not enforced)")
+    elif echo "$dmarc" | grep -qiE '(^|[;[:space:]])p=none'; then PROBLEMS+=("DMARC: ${d} policy p=none (monitor only, not enforced)")
     fi
 }
 
@@ -375,10 +375,13 @@ flag_mta_cves() {  # <banner-string>
 # ---- nmap NSE engine --------------------------------------------------------
 nse_probe() {  # <host> <port>  -> sets NSE_* and appends PROBLEMS
     local host="$1" port="$2" out scripts
-    scripts="smtp-commands,smtp-open-relay,smtp-ntlm-info,ssl-cert,ssl-enum-ciphers"
+    scripts="smtp-commands,smtp-ntlm-info,ssl-cert,ssl-enum-ciphers"
+    # the open-relay probe is an active (safe, non-delivering) transaction — honor --no-relay-test
+    local relay_args=()
+    [[ ${DO_RELAY} -eq 1 ]] && { scripts="${scripts},smtp-open-relay"
+        relay_args=(--script-args "smtp-open-relay.from=${RELAY_FROM},smtp-open-relay.to=${RELAY_TO}"); }
     [[ -n "$ENUM_FILE" ]] && scripts="${scripts},smtp-enum-users"
-    out="$(nmap -Pn -p "$port" --script "$scripts" \
-            --script-args "smtp-open-relay.from=${RELAY_FROM},smtp-open-relay.to=${RELAY_TO}" \
+    out="$(nmap -Pn -p "$port" --script "$scripts" "${relay_args[@]}" \
             --host-timeout "$((TIMEOUT*6))"s "$host" 2>/dev/null)"
     NSE_RAW="$out"
     # banner / EHLO line from smtp-commands
@@ -386,7 +389,8 @@ nse_probe() {  # <host> <port>  -> sets NSE_* and appends PROBLEMS
     [[ -z "$NSE_BANNER" ]] && NSE_BANNER="$(echo "$out" | grep -iE 'Service Info:|product:' | head -1 | tr -d '\r')"
     echo "$out" | grep -qiE 'smtp-open-relay:.*Server is an open relay|appears to be an open relay' && \
         PROBLEMS+=("open relay: nmap smtp-open-relay reports relaying permitted (safe test, no DATA sent)")
-    echo "$out" | grep -qiE 'STARTTLS' || PROBLEMS+=("STARTTLS: not advertised (cleartext mail transport)")
+    # only a false 'cleartext' claim if the host actually responded (empty out = dead/filtered)
+    [[ -n "$out" ]] && ! grep -qiE 'STARTTLS' <<<"$out" && PROBLEMS+=("STARTTLS: not advertised (cleartext mail transport)")
     NSE_TLS="$(echo "$out" | grep -oiE 'TLSv1\.[0-3]|SSLv[23]' | sort -u | paste -sd, -)"
     echo "$out" | grep -qiE 'SSLv[23]|TLSv1\.0|TLSv1\.1' && \
         PROBLEMS+=("weak TLS offered on SMTP: $(echo "$out" | grep -oiE 'SSLv[23]|TLSv1\.[01]' | sort -u | paste -sd, -) (see ssl-audit)")

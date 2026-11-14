@@ -37,7 +37,9 @@ TIMEOUT=5
 JSON=0
 USE_NSE=1
 WRITE_TEST=0
-COMMUNITIES="public,private,community,manager,cisco,snmp,admin,default,read,write,test,guest,security,monitor,netman"
+GUESS=0              # --guess/--brute: active multi-community guessing (sweep + snmp-brute)
+DEFAULT_COMMUNITIES="public,private,community,manager,cisco,snmp,admin,default,read,write,test,guest,security,monitor,netman"
+COMMUNITIES=""       # resolved after arg parse: 'public' by default, full list under --guess
 COMM_FILE=""
 TARGETS=()
 EXIT_CODE=0
@@ -67,8 +69,10 @@ USAGE:
     ${SCRIPT_NAME} [options] <host[:port]> [host[:port] ...]
 
 OPTIONS:
-    -c, --communities LIST  Comma-separated community list to try (default: built-in small list)
-    -C, --community-file F  File of community strings, one per line
+        --guess, --brute    Opt-in: actively guess the built-in community list AND run
+                            nmap snmp-brute. Default (no flag) tries ONLY 'public'.
+    -c, --communities LIST  Comma-separated community list to try (implies --guess)
+    -C, --community-file F  File of community strings, one per line (implies --guess)
     -p, --port PORT         Default UDP port (default: ${PORT_DEFAULT})
         --write-test        Opt-in writable-community probe via snmpset (no-op SET of
                             sysLocation back to its own value). Requires net-snmp snmpset.
@@ -92,8 +96,9 @@ EOF
 # ------------------------------------------------------------- arg parsing --
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -c|--communities)   COMMUNITIES="${2:?}"; shift 2 ;;
-        -C|--community-file) COMM_FILE="${2:?}"; shift 2 ;;
+        -c|--communities)   COMMUNITIES="${2:?}"; GUESS=1; shift 2 ;;
+        -C|--community-file) COMM_FILE="${2:?}"; GUESS=1; shift 2 ;;
+        --guess|--brute)    GUESS=1; shift ;;
         -p|--port)          PORT_DEFAULT="${2:?}"; shift 2 ;;
         --write-test)       WRITE_TEST=1; shift ;;
         --no-nse)           USE_NSE=0; shift ;;
@@ -112,6 +117,11 @@ if [[ -n "$COMM_FILE" ]]; then
     [[ -r "$COMM_FILE" ]] || { err "cannot read --community-file: $COMM_FILE"; exit 2; }
     COMMUNITIES=""
     while IFS= read -r l; do l="${l%%#*}"; l="${l//[[:space:]]/}"; [[ -n "$l" ]] && COMMUNITIES+="${COMMUNITIES:+,}$l"; done < "$COMM_FILE"
+fi
+# Default is a SINGLE read-only 'public' GET. Active guessing (the full default
+# list + nmap snmp-brute) only runs with --guess / --brute / -c / -C (opt-in).
+if [[ -z "$COMMUNITIES" ]]; then
+    if [[ ${GUESS} -eq 1 ]]; then COMMUNITIES="$DEFAULT_COMMUNITIES"; else COMMUNITIES="public"; fi
 fi
 
 ENGINE=""
@@ -269,13 +279,20 @@ PYEOF
 
 # ---- nmap NSE engine --------------------------------------------------------
 nse_probe() {  # <host> <port>
-    local host="$1" port="$2" out commdb=""
-    # hand nmap our community list via a temp db so guessing matches --communities
-    commdb="$(mktemp 2>/dev/null || echo "")"
-    if [[ -n "$commdb" ]]; then printf '%s\n' "${COMMUNITIES//,/$'\n'}" > "$commdb"; fi
-    out="$(nmap -Pn -sU -p "$port" \
-            --script snmp-info,snmp-sysdescr,snmp-brute \
-            ${commdb:+--script-args "snmp-brute.communitiesdb=$commdb"} \
+    local host="$1" port="$2" out commdb="" scripts="snmp-info,snmp-sysdescr"
+    # snmp-brute (active community guessing) only under --guess, fed OUR list via a
+    # temp db; if mktemp fails we skip brute rather than fall back to nmap's big dict.
+    local args=()
+    if [[ ${GUESS} -eq 1 ]]; then
+        commdb="$(mktemp 2>/dev/null || echo "")"
+        if [[ -n "$commdb" ]]; then
+            printf '%s\n' "${COMMUNITIES//,/$'\n'}" > "$commdb"
+            scripts="${scripts},snmp-brute"; args=(--script-args "snmp-brute.communitiesdb=$commdb")
+        else
+            warn "mktemp unavailable; skipping snmp-brute (not falling back to nmap's default list)"
+        fi
+    fi
+    out="$(nmap -Pn -sU -p "$port" --script "$scripts" "${args[@]}" \
             --host-timeout "$((TIMEOUT*10))"s "$host" 2>/dev/null)"
     [[ -n "$commdb" ]] && rm -f "$commdb"
     # communities discovered by snmp-brute ("public - Valid credentials")

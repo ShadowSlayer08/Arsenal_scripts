@@ -208,7 +208,7 @@ flag_ftp_cves() {  # <banner>
     # ProFTPD mod_copy unauth RCE — CVE-2015-3306 (SITE CPFR/CPTO)
     if echo "$b" | grep -qiE 'proftpd'; then
         v="$(echo "$b" | grep -oiE 'proftpd[ _]?[0-9][0-9.a-z]*' | grep -oiE '1\.3\.[0-9][0-9a-z]*' | head -1)"
-        echo "$v" | grep -qiE '^1\.3\.5$|^1\.3\.5[^a]|^1\.3\.6rc' && \
+        echo "$v" | grep -qiE '^1\.3\.5$|^1\.3\.6rc[0-9]' && \
             PROBLEMS+=("ProFTPD ${v} — CVE-2015-3306 mod_copy unauth file read/write RCE (SITE CPFR/CPTO); verify with cve-lookup")
     fi
 }
@@ -219,7 +219,8 @@ nse_probe() {  # <host> <port>
     scripts="ftp-anon,ftp-syst,ftp-bounce,ssl-cert"
     [[ ${NSE_INTRUSIVE} -eq 1 ]] && scripts="${scripts},ftp-vsftpd-backdoor,ftp-proftpd-backdoor"
     out="$(nmap -Pn -p "$port" --script "$scripts" --host-timeout "$((TIMEOUT*6))"s "$host" 2>/dev/null)"
-    NSE_BANNER="$(echo "$out" | grep -iE "^${port}/tcp" | sed -E 's#.*/tcp[[:space:]]+open[[:space:]]+[^[:space:]]+[[:space:]]*##' | head -1 | tr -d '\r')"
+    # only an OPEN port yields a banner — a 'closed'/'filtered' port line must not be mistaken for one
+    NSE_BANNER="$(echo "$out" | grep -iE "^${port}/tcp[[:space:]]+open" | sed -E 's#.*/tcp[[:space:]]+open[[:space:]]+[^[:space:]]+[[:space:]]*##' | head -1 | tr -d '\r')"
     [[ -z "$NSE_BANNER" ]] && NSE_BANNER="$(echo "$out" | grep -iE 'Service Info:' | head -1 | sed 's/Service Info: //' | tr -d '\r')"
     echo "$out" | grep -qiE 'ftp-anon:.*Anonymous FTP login allowed' && NSE_ANON="yes" || NSE_ANON="no"
     echo "$out" | grep -qiE 'ftp-bounce:.*bounce working|FXP' && PROBLEMS+=("FTP bounce (FXP) allowed: nmap ftp-bounce reports PORT-to-third-host working")
@@ -278,8 +279,8 @@ audit_target() {
 
     if [[ "$reachable" == "false" ]]; then
         [[ ${JSON} -eq 0 ]] && { section "${host}:${port}  (engine: ${ENGINE})"; err "no FTP response (host down, filtered, or not FTP)"; }
-        [[ ${JSON} -eq 1 ]] && printf '{"tool":"ftp-audit","host":"%s","port":"%s","reachable":false,"problems":["no FTP response"]}\n' "$(jesc "$host")" "$(jesc "$port")"
-        EXIT_CODE=1; return
+        [[ ${JSON} -eq 1 ]] && printf '{"tool":"ftp-audit","host":"%s","port":"%s","reachable":false,"problems":[]}\n' "$(jesc "$host")" "$(jesc "$port")"
+        return   # unreachable is not a security finding (exit stays 0), matching snmp/smtp/db
     fi
 
     # findings

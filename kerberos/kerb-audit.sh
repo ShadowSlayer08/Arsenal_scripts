@@ -356,7 +356,7 @@ if [[ ${#USERS[@]} -gt 0 ]]; then
         run_python_enum "${USERS[@]}"
     fi
 else
-    warn "no usernames supplied (-u FILE / --user NAME): skipping account enumeration"
+    [[ ${JSON} -eq 0 ]] && warn "no usernames supplied (-u FILE / --user NAME): skipping account enumeration"
 fi
 
 # de-dup result arrays

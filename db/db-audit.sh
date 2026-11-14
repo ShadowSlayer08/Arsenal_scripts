@@ -57,7 +57,7 @@ fi
 info()    { printf '%s[*]%s %s\n'  "${C_B}"   "${C_RST}" "$*"; }
 ok()      { printf '%s[+]%s %s\n'  "${C_G}"   "${C_RST}" "$*"; }
 warn()    { printf '%s[!]%s %s\n'  "${C_Y}"   "${C_RST}" "$*"; }
-err()     { printf '%s[x]%s %s\n'  "${C_R}"   "${C_RST}" "$*"; }
+err()     { printf '%s[x]%s %s\n'  "${C_R}"   "${C_RST}" "$*" >&2; }
 field()   { printf '    %s%-12s%s %s\n' "${C_DIM}" "$1" "${C_RST}" "$2"; }
 section() { printf '\n%s%s== %s ==%s\n' "${C_BOLD}" "${C_C}" "$*" "${C_RST}"; }
 
@@ -102,9 +102,9 @@ CHECKS (safe, read-only unless noted):
     postgres       SSLRequest TLS probe, StartupMessage trust-auth detection
                    (AuthenticationOk with no password), auth method.
     mysql/mariadb  handshake version, CLIENT_SSL (TLS) capability, old-password
-                   hashing; blank/default-cred test via nmap mysql-empty-password.
+                   hashing; blank/default-cred login only with --allow-destructive.
     mssql          UDP 1434 Browser exposure + version, TDS PRELOGIN encryption
-                   (TLS) token; sa blank password via nmap ms-sql-empty-password.
+                   (TLS) token; sa blank-password login only with --allow-destructive.
 
 NOTES:
     Nothing is written or modified without --allow-destructive. Only probe
@@ -174,9 +174,12 @@ type_from_port() {
 # nmap NSE scripts to enrich a given engine (safe set; brute added when allowed)
 nmap_scripts_for() {
     local t="$1" base=""
+    # Default set is INFO-ONLY (read-only). Scripts that attempt a blank-password
+    # login or authenticate+enumerate (empty-password, users, databases, brute)
+    # are active credential guessing and only run with --allow-destructive.
     case "$t" in
-        mysql|mariadb) base="mysql-info,mysql-empty-password,mysql-users,mysql-databases" ;;
-        mssql)         base="ms-sql-info,ms-sql-ntlm-info,ms-sql-empty-password" ;;
+        mysql|mariadb) base="mysql-info" ;;
+        mssql)         base="ms-sql-info,ms-sql-ntlm-info" ;;
         mongodb)       base="mongodb-info,mongodb-databases" ;;
         redis)         base="redis-info" ;;
         postgres)      base="" ;;
@@ -184,8 +187,8 @@ nmap_scripts_for() {
     esac
     if [[ $ALLOW_DESTRUCTIVE -eq 1 ]]; then
         case "$t" in
-            mysql|mariadb) base="${base},mysql-brute" ;;
-            mssql)         base="${base},ms-sql-brute" ;;
+            mysql|mariadb) base="${base},mysql-empty-password,mysql-users,mysql-databases,mysql-brute" ;;
+            mssql)         base="${base},ms-sql-empty-password,ms-sql-brute" ;;
             mongodb)       base="${base},mongodb-brute" ;;
             redis)         base="${base},redis-brute" ;;
             postgres)      base="pgsql-brute" ;;
@@ -905,7 +908,10 @@ printf '%s[db-audit]%s authorized / lab use only — read-only unless --allow-de
 
 REPLY_HOST=""; REPLY_PORT=""; REPLY_TYPE=""
 for raw in "${TARGETS[@]}"; do
-    resolve_target "$raw" || { EXIT_CODE=1; continue; }
+    if ! resolve_target "$raw"; then
+        [[ ${JSON} -eq 1 ]] && printf '{"tool":"db-audit","host":"%s","reachable":false,"problems":["could not identify DB engine/port (use --type or a scheme)"]}\n' "${raw//\"/}"
+        EXIT_CODE=1; continue
+    fi
     host="$REPLY_HOST"; port="$REPLY_PORT"; dbtype="$REPLY_TYPE"
 
     nnote=""; nfind=""
@@ -914,7 +920,11 @@ for raw in "${TARGETS[@]}"; do
     fi
 
     json="$(run_engine "$host" "$port" "$dbtype" "$nnote" "$nfind")"
-    [[ -z "$json" ]] && { err "engine produced no output for ${host}:${port}"; EXIT_CODE=1; continue; }
+    if [[ -z "$json" ]]; then
+        err "engine produced no output for ${host}:${port}"
+        [[ ${JSON} -eq 1 ]] && printf '{"tool":"db-audit","host":"%s","port":"%s","reachable":false,"problems":["engine produced no output"]}\n' "${host//\"/}" "${port//\"/}"
+        EXIT_CODE=1; continue
+    fi
 
     if [[ ${JSON} -eq 1 ]]; then
         printf '%s\n' "$json"
