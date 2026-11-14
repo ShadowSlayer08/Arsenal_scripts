@@ -27,6 +27,8 @@ PORT_DEFAULT=443
 TIMEOUT=10
 JSON=0
 DO_CIPHERS=0
+DO_VULN=0            # --vuln: safe, detection-only TLS vuln probes (needs nmap)
+DO_RENEG=0           # --reneg: opt-in client-initiated renegotiation test
 STARTTLS=""
 SERVERNAME=""        # override SNI
 HOSTS=()
@@ -67,6 +69,11 @@ OPTIONS:
         --servername NAME Override SNI / server name sent in handshake
         --starttls PROTO  Use STARTTLS (smtp|imap|pop3|ftp|xmpp|ldap|postgres|mysql)
         --ciphers         Enumerate supported ciphers per protocol (requires nmap)
+        --vuln            Safe, detection-only TLS vuln probes (Heartbleed, CCS,
+                          POODLE, Logjam, SWEET32/RC4, ROBOT, ticketbleed, ROCA);
+                          needs nmap. Emits found CVE IDs (feeds the vuln DB/graph).
+        --no-vuln         Disable the vuln probes (default when --vuln not given)
+        --reneg           Opt-in: also test client-initiated renegotiation (single-shot)
         --json            Emit JSON (one object per host) instead of text
         --warn-days N     Warn if cert expires within N days (default: ${EXPIRY_WARN_DAYS})
     -h, --help            Show this help
@@ -97,6 +104,9 @@ while [[ $# -gt 0 ]]; do
         --servername)    SERVERNAME="${2:?}"; shift 2 ;;
         --starttls)      STARTTLS="${2:?}"; shift 2 ;;
         --ciphers)       DO_CIPHERS=1; shift ;;
+        --vuln)          DO_VULN=1; shift ;;
+        --no-vuln)       DO_VULN=0; shift ;;
+        --reneg)         DO_RENEG=1; DO_VULN=1; shift ;;
         --json)          JSON=1; shift ;;
         --warn-days)     EXPIRY_WARN_DAYS="${2:?}"; shift 2 ;;
         -h|--help)       usage; exit 0 ;;
@@ -109,6 +119,7 @@ done
 have openssl || { err "openssl is required but not found in PATH"; exit 2; }
 [[ ${#HOSTS[@]} -eq 0 ]] && { err "no hosts given"; usage; exit 2; }
 [[ ${DO_CIPHERS} -eq 1 ]] && ! have nmap && { warn "--ciphers needs nmap; disabling"; DO_CIPHERS=0; }
+[[ ${DO_VULN} -eq 1 ]] && ! have nmap && warn "--vuln: nmap not found; running openssl-only probes (reneg/CRIME) and skipping NSE vuln scripts"
 
 # epoch helper that works with GNU and BSD date
 to_epoch() {  # <date string from openssl, e.g. "Jun  1 12:00:00 2026 GMT">
@@ -122,6 +133,59 @@ now_epoch() { date +%s; }
 
 # JSON string escape
 jesc() { local s="${1//$'\r'/}"; s="${s//$'\t'/ }"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/ }"; printf '%s' "$s"; }
+
+# ----------------------------------------------------------- vuln probing ----
+# true if a VULNERABLE verdict appears in the NSE block headed by $2 within $1
+vhit() { grep -A8 -- "$2" <<<"$1" 2>/dev/null | grep -qiE 'VULNERABLE'; }
+
+# Safe, detection-only TLS vulnerability probes. Sets globals:
+#   VULN_PROBLEMS[] (human strings), CVE_REFS[] (CVE IDs for the graph/vuln-db),
+#   VULN_JSON (object body), V_CIPHER_ORDER, V_PFS, V_DH_BITS, V_GRADE.
+probe_vulns() {
+    local host="$1" port="$2" sni="$3"
+    VULN_PROBLEMS=(); CVE_REFS=(); VULN_JSON=""
+    V_CIPHER_ORDER=""; V_PFS=""; V_DH_BITS=""; V_GRADE=""
+    declare -A VSTATE=()
+
+    if have nmap; then
+        local nse
+        nse="$(nmap -Pn -p "$port" --script ssl-heartbleed,ssl-ccs-injection,ssl-poodle,ssl-dh-params,ssl-enum-ciphers,tls-ticketbleed,rsa-vuln-roca --host-timeout "$((TIMEOUT*12))"s "$host" 2>/dev/null)"
+        vhit "$nse" 'ssl-heartbleed:'   && { VSTATE[heartbleed]=1;   VULN_PROBLEMS+=("Heartbleed (CVE-2014-0160): server memory disclosure"); CVE_REFS+=("CVE-2014-0160"); }
+        vhit "$nse" 'ssl-ccs-injection:' && { VSTATE[ccs_injection]=1; VULN_PROBLEMS+=("CCS injection (CVE-2014-0224)"); CVE_REFS+=("CVE-2014-0224"); }
+        vhit "$nse" 'ssl-poodle:'       && { VSTATE[poodle]=1;       VULN_PROBLEMS+=("POODLE (CVE-2014-3566): SSLv3 CBC"); CVE_REFS+=("CVE-2014-3566"); }
+        vhit "$nse" 'ssl-dh-params:'    && { VSTATE[logjam]=1;       VULN_PROBLEMS+=("weak DH / Logjam (CVE-2015-4000)"); CVE_REFS+=("CVE-2015-4000"); }
+        vhit "$nse" 'tls-ticketbleed:'  && { VSTATE[ticketbleed]=1;  VULN_PROBLEMS+=("Ticketbleed (CVE-2016-9244): memory disclosure"); CVE_REFS+=("CVE-2016-9244"); }
+        vhit "$nse" 'rsa-vuln-roca:'    && { VSTATE[roca]=1;         VULN_PROBLEMS+=("ROCA (CVE-2017-15361): factorable RSA key"); CVE_REFS+=("CVE-2017-15361"); }
+        local enum; enum="$(sed -n '/ssl-enum-ciphers/,/^[^|]*$/p' <<<"$nse")"
+        if [[ -n "$enum" ]]; then
+            grep -qiE 'cipher preference: *server' <<<"$enum" && V_CIPHER_ORDER="server"
+            if grep -qiE 'cipher preference: *client' <<<"$enum"; then V_CIPHER_ORDER="client"; VULN_PROBLEMS+=("server does not enforce cipher order (client preference)"); fi
+            if grep -qiE 'ECDHE|DHE' <<<"$enum"; then V_PFS="true"; else V_PFS="false"; VULN_PROBLEMS+=("no forward secrecy (no ECDHE/DHE suites offered)"); fi
+            grep -qiE '3DES|DES-CBC3|_64_|SWEET32' <<<"$enum" && { VSTATE[sweet32]=1; VULN_PROBLEMS+=("SWEET32 (CVE-2016-2183): 64-bit block cipher (3DES)"); CVE_REFS+=("CVE-2016-2183"); }
+            grep -qiE 'RC4' <<<"$enum" && { VSTATE[rc4]=1; VULN_PROBLEMS+=("RC4 cipher offered (CVE-2013-2566)"); CVE_REFS+=("CVE-2013-2566"); }
+            V_GRADE="$(grep -iE 'least strength:' <<<"$enum" | grep -oE '[A-F]' | head -1)"
+        fi
+        V_DH_BITS="$(grep -A8 'ssl-dh-params:' <<<"$nse" | grep -oiE '[0-9]{3,4}[ -]?bit' | grep -oE '[0-9]{3,4}' | head -1)"
+    fi
+
+    # openssl-native (no nmap): secure renegotiation + TLS compression (CRIME)
+    local so
+    so="$(echo | timeout "${TIMEOUT}" openssl s_client -connect "${host}:${port}" -servername "$sni" ${STARTTLS:+-starttls "$STARTTLS"} 2>/dev/null)"
+    if grep -qi 'Secure Renegotiation IS NOT supported' <<<"$so"; then
+        VSTATE[insecure_reneg]=1; VULN_PROBLEMS+=("insecure renegotiation (CVE-2009-3555): no RFC 5746 support"); CVE_REFS+=("CVE-2009-3555")
+    fi
+    if grep -qiE 'Compression: *[A-Za-z0-9]' <<<"$so" && ! grep -qiE 'Compression: *NONE' <<<"$so"; then
+        VSTATE[crime]=1; VULN_PROBLEMS+=("TLS compression enabled — CRIME (CVE-2012-4929)"); CVE_REFS+=("CVE-2012-4929")
+    fi
+
+    # opt-in: client-initiated renegotiation (single-shot DoS indicator)
+    if [[ ${DO_RENEG} -eq 1 ]] && printf 'R\nR\n' | timeout "${TIMEOUT}" openssl s_client -connect "${host}:${port}" -servername "$sni" 2>&1 | grep -qiE 'RENEGOTIATING'; then
+        VSTATE[client_reneg]=1; VULN_PROBLEMS+=("server honors client-initiated renegotiation (DoS risk)")
+    fi
+
+    local k first=1
+    for k in "${!VSTATE[@]}"; do [[ $first -eq 0 ]] && VULN_JSON+=","; VULN_JSON+="\"$k\":true"; first=0; done
+}
 
 # ---------------------------------------------------------- per-host handler --
 audit_host() {
@@ -238,6 +302,19 @@ audit_host() {
 
     (( hard == 1 )) && EXIT_CODE=1
 
+    # --- optional safe TLS vulnerability probes ------------------------------
+    local cve_json=""
+    if [[ ${DO_VULN} -eq 1 ]]; then
+        probe_vulns "$host" "$port" "$sni"
+        local vp
+        for vp in "${VULN_PROBLEMS[@]:-}"; do [[ -n "$vp" ]] && j_problems+=("$vp"); done
+        # confirmed memory-disclosure / key-recovery vulns are hard failures
+        printf '%s\n' "${VULN_PROBLEMS[@]:-}" | grep -qiE 'heartbleed|ticketbleed|roca|logjam|poodle|ccs' && EXIT_CODE=1
+        local c first_c=1
+        for c in "${CVE_REFS[@]:-}"; do [[ -z "$c" ]] && continue
+            [[ $first_c -eq 0 ]] && cve_json+=","; cve_json+="\"$(jesc "$c")\""; first_c=0; done
+    fi
+
     # --- optional cipher enumeration -----------------------------------------
     local ciphers=""
     if [[ ${DO_CIPHERS} -eq 1 ]]; then
@@ -261,6 +338,12 @@ audit_host() {
             "${j_keybits:-null}" "$(jesc "$j_keyalg")" "$(jesc "$j_sigalg")" "$j_selfsigned"
         printf '"hostname_match":"%s","chain_valid":%s,' "$j_hostmatch" \
             "$([[ "$j_chainok" == "true" ]] && echo true || echo false)"
+        if [[ ${DO_VULN} -eq 1 ]]; then
+            printf '"vulns":{%s},"cve_refs":[%s],"cipher_order":"%s","pfs":%s,"dh_bits":%s,"tls_grade":"%s",' \
+                "${VULN_JSON}" "${cve_json}" "$(jesc "$V_CIPHER_ORDER")" \
+                "$([[ "$V_PFS" == "true" ]] && echo true || echo false)" \
+                "${V_DH_BITS:-null}" "$(jesc "$V_GRADE")"
+        fi
         printf '"protocols":"%s","problems":[%s]}\n' "$(jesc "$j_protos")" "$probs_json"
         return
     fi
@@ -283,6 +366,13 @@ audit_host() {
     field "Hostname match" "$j_hostmatch"
     field "Chain valid"  "$j_chainok"
     field "Protocols"    "${j_protos:-none}"
+    if [[ ${DO_VULN} -eq 1 ]]; then
+        [[ -n "$V_CIPHER_ORDER" ]] && field "Cipher order"    "$V_CIPHER_ORDER"
+        [[ -n "$V_PFS" ]]          && field "Forward secrecy" "$V_PFS"
+        [[ -n "$V_DH_BITS" ]]      && field "DH modulus"      "${V_DH_BITS}-bit"
+        [[ -n "$V_GRADE" ]]        && field "Cipher grade"    "$V_GRADE"
+        [[ ${#CVE_REFS[@]} -gt 0 ]] && field "CVE refs"       "$(IFS=,; echo "${CVE_REFS[*]}")"
+    fi
     [[ -n "$ciphers" ]] && { printf '%s  Ciphers:%s\n' "${C_DIM}" "${C_RST}"; echo "$ciphers" | sed 's/^/      /'; }
 
     if [[ ${#j_problems[@]} -eq 0 || ( ${#j_problems[@]} -eq 1 && -z "${j_problems[0]}" ) ]]; then
