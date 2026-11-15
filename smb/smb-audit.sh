@@ -56,8 +56,8 @@ fi
 info()    { printf '%s[*]%s %s\n'  "${C_B}"   "${C_RST}" "$*"; }
 ok()      { printf '%s[+]%s %s\n'  "${C_G}"   "${C_RST}" "$*"; }
 warn()    { printf '%s[!]%s %s\n'  "${C_Y}"   "${C_RST}" "$*"; }
-err()     { printf '%s[x]%s %s\n'  "${C_R}"   "${C_RST}" "$*"; }
-crit()    { printf '%s[X]%s %s\n'  "${C_M}"   "${C_RST}" "$*"; }
+err()     { printf '%s[x]%s %s\n'  "${C_R}"   "${C_RST}" "$*" >&2; }
+crit()    { printf '%s[X]%s %s\n'  "${C_M}"   "${C_RST}" "$*" >&2; }
 field()   { printf '    %s%-18s%s %s\n' "${C_DIM}" "$1" "${C_RST}" "$2"; }
 section() { printf '\n%s%s== %s ==%s\n' "${C_BOLD}" "${C_C}" "$*" "${C_RST}"; }
 
@@ -336,8 +336,10 @@ try:
     s.settimeout(tmo)
     s.sendall(nb(smb1))
     r = recv_nb(s); s.close()
-    if len(r) >= 37 and r[4:8] == b"\xffSMB" and r[9:13] == b"\x00\x00\x00\x00":
-        didx = struct.unpack("<H", r[37:39])[0] if len(r) >= 39 else 0xFFFF
+    # recv_nb strips the 4-byte NetBIOS header, so the SMB1 payload starts at r[0]:
+    # [0:4]=\xffSMB, [5:9]=NT status, 32-byte header + 1-byte WordCount -> DialectIndex at [33:35]
+    if len(r) >= 35 and r[0:4] == b"\xffSMB" and r[5:9] == b"\x00\x00\x00\x00":
+        didx = struct.unpack("<H", r[33:35])[0] if len(r) >= 35 else 0xFFFF
         if didx != 0xFFFF:
             emit("SMBV1", "yes"); emit("DIALECT", "NT LM 0.12 (SMBv1)")
 except Exception:
@@ -503,12 +505,12 @@ audit_host() {
 
     if [[ "$REACHABLE" != "yes" ]]; then
         if [[ $JSON -eq 1 ]]; then
-            printf '{"tool":"smb-audit","host":"%s","port":"%s","reachable":false,"problems":["no SMB response (host down, filtered, or not SMB)"]}\n' \
+            printf '{"tool":"smb-audit","host":"%s","port":"%s","reachable":false,"problems":[]}\n' \
                 "$(jesc "$host")" "$(jesc "$port")"
         else
             section "${host}:${port}"; err "no SMB response (host down, filtered, or not SMB)"
         fi
-        EXIT_CODE=1; return
+        return   # unreachable is not a security finding (exit stays 0), matching snmp/smtp/db/ftp
     fi
 
     # SMBv1

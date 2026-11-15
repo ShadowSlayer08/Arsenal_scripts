@@ -112,11 +112,11 @@ def enrich_from_db(g, conn, cve_nid):
                confidence="EXTRACTED" if e[0] in ("edb", "msf") else "INFERRED")
 
 
-def ingest(g, obj, conn):
+def ingest(g, obj):
     tool = obj.get("tool")
     if not tool:
         return
-    host = str(obj.get("host", obj.get("target", obj.get("query", "?"))))
+    host = str(obj.get("host") or obj.get("target") or obj.get("query") or "?")
     port = obj.get("port")
     proto, l4 = TOOL_PROTO.get(tool, (None, "tcp"))
     if tool == "db-audit":
@@ -175,12 +175,8 @@ def ingest(g, obj, conn):
             g.edge(cve, "HAS_EXPLOIT", exid,
                    confidence="EXTRACTED" if ex.get("kind") in ("edb", "msf") else "INFERRED")
 
-    # enrich every CVE node from the shared vuln DB — adds CVSS/EPSS/KEV where
-    # missing and, crucially, the public exploits + CWE that tie the ribbon
-    # together (the lookup's cves[] may already carry CVSS but not exploits/CWE)
-    if conn:
-        for nid in [n for n in g.nodes if n.startswith("cve:")]:
-            enrich_from_db(g, conn, nid)
+    # (CVE enrichment from the vuln DB runs once in main() after all inputs are
+    # read — doing it per line re-queried every prior CVE on every input)
 
 
 def to_bloodhound(g):
@@ -214,34 +210,55 @@ def main():
         else:
             conn = sqlite3.connect("file:%s?mode=ro&immutable=1" % os.path.abspath(args.vulndb), uri=True)
 
-    # read input
-    streams = [open(f, encoding="utf-8") for f in args.files] if args.files else [sys.stdin]
-    n_in = 0
-    for st in streams:
+    # read input — lazily, so one bad path can't abort the whole build, and
+    # count what we skip so dropped findings are never silent (utf-8-sig eats a BOM)
+    n_in = n_skip = n_bad = 0
+
+    def read_stream(st):
+        nonlocal n_in, n_skip, n_bad
         for line in st:
-            line = line.strip()
+            line = line.lstrip("﻿").strip()
             if not line or line[0] != "{":
+                n_skip += 1 if line else 0
                 continue
             try:
                 obj = json.loads(line)
             except Exception:
+                n_bad += 1
                 continue
-            ingest(g, obj, conn)
+            ingest(g, obj)
             n_in += 1
 
+    if args.files:
+        for fpath in args.files:
+            try:
+                with open(fpath, encoding="utf-8-sig") as st:
+                    read_stream(st)
+            except OSError as e:
+                sys.stderr.write("[!] skipping unreadable input %s (%s)\n" % (fpath, e))
+    else:
+        read_stream(sys.stdin)
+
+    # enrich every CVE node from the shared vuln DB — once, after all inputs
+    if conn:
+        for nid in [n for n in g.nodes if n.startswith("cve:")]:
+            enrich_from_db(g, conn, nid)
+    if n_skip or n_bad:
+        sys.stderr.write("[!] skipped %d non-JSON and %d malformed input line(s)\n" % (n_skip, n_bad))
+
     os.makedirs(args.out, exist_ok=True)
-    with open(os.path.join(args.out, "nodes.jsonl"), "w", encoding="utf-8") as f:
+    with open(os.path.join(args.out, "nodes.jsonl"), "w", encoding="utf-8", newline="\n") as f:
         for n in g.nodes.values():
             f.write(json.dumps(n) + "\n")
-    with open(os.path.join(args.out, "edges.jsonl"), "w", encoding="utf-8") as f:
+    with open(os.path.join(args.out, "edges.jsonl"), "w", encoding="utf-8", newline="\n") as f:
         for e in g.edges.values():
             f.write(json.dumps(e) + "\n")
     bundle = {"schema": SCHEMA, "generated": ts, "engagement": args.engagement,
               "nodes": list(g.nodes.values()), "edges": list(g.edges.values()), "hyperedges": []}
-    with open(os.path.join(args.out, "graph.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(args.out, "graph.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(bundle, f, indent=2)
     if args.format in ("bloodhound", "both"):
-        with open(os.path.join(args.out, "bloodhound.json"), "w", encoding="utf-8") as f:
+        with open(os.path.join(args.out, "bloodhound.json"), "w", encoding="utf-8", newline="\n") as f:
             json.dump(to_bloodhound(g), f, indent=2)
 
     counts = {"nodes": len(g.nodes), "edges": len(g.edges),
@@ -253,7 +270,7 @@ def main():
                 "producers": sorted({n["source"]["tool"] for n in g.nodes.values() if n["source"]["tool"]}),
                 "files": {"nodes": "nodes.jsonl", "edges": "edges.jsonl", "graphify": "graph.json"},
                 "counts": counts}
-    with open(os.path.join(args.out, "manifest.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(args.out, "manifest.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(manifest, f, indent=2)
     if conn:
         conn.close()

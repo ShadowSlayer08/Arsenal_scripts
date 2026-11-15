@@ -10,21 +10,22 @@
 #     * anon enum    — can an anonymous bind read user/group objects (leak)
 #     * LDAPS        — is 636/tcp (LDAP-over-TLS) offered
 #     * StartTLS     — is the StartTLS extended operation offered on 389
-#     * signing      — is LDAP signing enforced (hint: NTLM-relay exposure)
+#     * signing      — is LDAP signing enforced (opt-in --signing; sends one
+#                      bogus credentialed bind, so it is off by default)
 #   Default backend is nmap NSE (ldap-rootdse / ldap-search); a built-in
 #   python3 LDAP client is the universal fallback and also drives the
-#   TLS / signing probes nmap cannot do. `ldapsearch` is used when present.
+#   TLS / signing probes nmap cannot do.
 #   Only probe directories you own or are explicitly authorized to test.
 # =============================================================================
 #
-#   Requires: python3 (universal). Optional/preferred: nmap, ldapsearch, openssl.
+#   Requires: python3 (universal). Optional: nmap (preferred default backend).
 #
 #   Quick start:
 #     ./ldap-audit.sh dc01.corp.local                 # LDAP on 389 (+636 probe)
 #     ./ldap-audit.sh 10.0.0.5:389
 #     ./ldap-audit.sh -f dcs.txt
 #     ./ldap-audit.sh --json dc01.corp.local
-#     ./ldap-audit.sh --no-signing dc01.corp.local    # skip the bogus-cred bind
+#     ./ldap-audit.sh --signing dc01.corp.local       # opt-in: bogus-cred bind to test signing
 #
 set -uo pipefail
 
@@ -32,7 +33,7 @@ PORT_DEFAULT=389
 LDAPS_PORT=636
 TIMEOUT=10
 JSON=0
-DO_SIGNING=1
+DO_SIGNING=0        # opt-in only (--signing): the probe sends an active bogus bind
 DO_ENUM=1
 PREFER_NMAP=1
 TARGETS=()
@@ -47,7 +48,7 @@ fi
 info()    { printf '%s[*]%s %s\n'  "${C_B}"   "${C_RST}" "$*"; }
 ok()      { printf '%s[+]%s %s\n'  "${C_G}"   "${C_RST}" "$*"; }
 warn()    { printf '%s[!]%s %s\n'  "${C_Y}"   "${C_RST}" "$*"; }
-err()     { printf '%s[x]%s %s\n'  "${C_R}"   "${C_RST}" "$*"; }
+err()     { printf '%s[x]%s %s\n'  "${C_R}"   "${C_RST}" "$*" >&2; }
 field()   { printf '    %s%-18s%s %s\n' "${C_DIM}" "$1" "${C_RST}" "$2"; }
 section() { printf '\n%s%s== %s ==%s\n' "${C_BOLD}" "${C_C}" "$*" "${C_RST}"; }
 have()    { command -v "$1" >/dev/null 2>&1; }
@@ -63,7 +64,7 @@ while [[ $# -gt 0 ]]; do
             shift 2 ;;
         -p|--port)      PORT_DEFAULT="${2:?}"; shift 2 ;;
         -t|--timeout)   TIMEOUT="${2:?}"; shift 2 ;;
-        --no-signing)   DO_SIGNING=0; shift ;;
+        --signing)      DO_SIGNING=1; shift ;;
         --no-enum)      DO_ENUM=0; shift ;;
         --no-nmap)      PREFER_NMAP=0; shift ;;
         --json)         JSON=1; shift ;;
@@ -377,7 +378,9 @@ nmap_enum_count() {
     out="$(nmap -Pn -n -p "$port" --script ldap-search \
            --script-args 'ldap.qfilter=all,ldap.maxobjects=5' \
            --host-timeout "$((TIMEOUT * 3))s" "$host" 2>/dev/null)"
-    echo "$out" | grep -ciE 'dn:|sAMAccountName:|objectClass:'
+    # count DN lines only (one per returned object) — counting sAMAccountName/
+    # objectClass lines too would inflate the object count several-fold
+    echo "$out" | grep -ciE '^[| ]*dn:'
 }
 
 audit_target() {
