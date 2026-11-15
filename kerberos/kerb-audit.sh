@@ -54,7 +54,7 @@ err()     { printf '%s[x]%s %s\n'  "${C_R}"   "${C_RST}" "$*"; }
 field()   { printf '    %s%-16s%s %s\n' "${C_DIM}" "$1" "${C_RST}" "$2"; }
 section() { printf '\n%s%s== %s ==%s\n' "${C_BOLD}" "${C_C}" "$*" "${C_RST}"; }
 have()    { command -v "$1" >/dev/null 2>&1; }
-jesc()    { local s="${1//$'\r'/}"; s="${s//$'\t'/ }"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/ }"; printf '%s' "$s"; }
+jesc()    { local s="${1//$'\r'/}"; s="${s//$'\t'/ }"; s="${s//$'\n'/ }"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="$(printf '%s' "$s" | tr -d '\000-\010\013\014\016-\037\177')"; printf '%s' "$s"; }
 
 usage() { sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; }
 
@@ -181,8 +181,10 @@ def classify(data, user, realm):
         ec = find_ctx(seqc, 0xA6)
         code = int.from_bytes(rd_tlv(ec, 0)[1], "big") if ec else -1
         out["error_code"] = code
+        # default to "unknown" (NOT "valid") so an unexpected KDC error code
+        # never fabricates a confirmed account in the enumeration result
         out["status"] = {6: "invalid", 25: "valid", 68: "wrong-realm",
-                         18: "revoked", 37: "clock-skew"}.get(code, "valid")
+                         18: "revoked", 37: "clock-skew"}.get(code, "unknown")
     elif tag == 0x6b:                                 # AS-REP -> no pre-auth
         out["status"] = "valid-nopreauth"
         try:
@@ -401,8 +403,8 @@ if [[ ${JSON} -eq 1 ]]; then
     for p in "${problems[@]:-}"; do [[ -z "$p" ]] && continue; [[ $first -eq 0 ]] && pj+=","; pj+="\"$(jesc "$p")\""; first=0; done
     printf '{"tool":"kerb-audit","host":"%s","port":%s,"realm":"%s","reachable":true,"backend":"%s",' \
         "$(jesc "$DC")" "$PORT" "$(jesc "$REALM_UC")" "$(jesc "$backend")"
-    printf '"valid_users":[%s],"asrep_roastable":[%s],"asrep_hashes":%s,"kerberoastable":[%s],"problems":[%s]}\n' \
-        "$(jarr "${valid_users[@]:-}")" "$(jarr "${roastable[@]:-}")" "${#roast_hashes[@]}" \
+    printf '"valid_users":[%s],"asrep_roastable":[%s],"asrep_hashes":[%s],"asrep_hash_count":%s,"kerberoastable":[%s],"problems":[%s]}\n' \
+        "$(jarr "${valid_users[@]:-}")" "$(jarr "${roastable[@]:-}")" "$(jarr "${roast_hashes[@]:-}")" "${#roast_hashes[@]}" \
         "$(jarr "${kerberoastable[@]:-}")" "$pj"
 else
     section "${DC} (realm ${REALM_UC})"
@@ -410,7 +412,7 @@ else
     field "Realm"      "$([[ "$realm_ok" == "false" ]] && echo "WRONG (KDC rejected)" || echo "accepted")"
     field "Valid users" "${#valid_users[@]}${valid_users:+ — ${valid_users[*]}}"
     field "Roastable"   "${#roastable[@]}${roastable:+ — ${roastable[*]}}"
-    [[ ${#roast_hashes[@]} -gt 0 ]] && field "Hashes" "${#roast_hashes[@]} captured (see --json for the hash strings)"
+    [[ ${#roast_hashes[@]} -gt 0 ]] && field "Hashes" "${#roast_hashes[@]} captured (in --json asrep_hashes[], and listed below)"
     [[ ${DO_SPN} -eq 1 ]] && field "Kerberoastable" "${#kerberoastable[@]}${kerberoastable:+ — ${kerberoastable[*]}}"
     if [[ ${#problems[@]} -eq 0 ]]; then ok "no Kerberos exposures detected for the supplied input"
     else for p in "${problems[@]}"; do warn "$p"; done; fi

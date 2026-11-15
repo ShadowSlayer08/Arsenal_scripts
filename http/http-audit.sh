@@ -55,7 +55,7 @@ err()     { printf '%s[x]%s %s\n'  "${C_R}"   "${C_RST}" "$*"; }
 field()   { printf '    %s%-26s%s %s\n' "${C_DIM}" "$1" "${C_RST}" "$2"; }
 section() { printf '\n%s%s== %s ==%s\n' "${C_BOLD}" "${C_C}" "$*" "${C_RST}"; }
 have()    { command -v "$1" >/dev/null 2>&1; }
-jesc()    { local s="${1//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/ }"; s="${s//$'\r'/}"; printf '%s' "$s"; }
+jesc()    { local s="${1//$'\r'/}"; s="${s//$'\t'/ }"; s="${s//$'\n'/ }"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="$(printf '%s' "$s" | tr -d '\000-\010\013\014\016-\037\177')"; printf '%s' "$s"; }
 
 usage() { awk 'NR>1 && /^#/{sub(/^# ?/,"");print;next} NR>1{exit}' "$0"; }
 

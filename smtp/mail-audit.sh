@@ -59,7 +59,7 @@ err()     { printf '%s[x]%s %s\n'  "${C_R}"   "${C_RST}" "$*"; }
 field()   { printf '    %s%-18s%s %s\n' "${C_DIM}" "$1" "${C_RST}" "$2"; }
 section() { printf '\n%s%s== %s ==%s\n' "${C_BOLD}" "${C_C}" "$*" "${C_RST}"; }
 have()    { command -v "$1" >/dev/null 2>&1; }
-jesc()    { local s="${1//$'\r'/}"; s="${s//$'\t'/ }"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/ }"; printf '%s' "$s"; }
+jesc()    { local s="${1//$'\r'/}"; s="${s//$'\t'/ }"; s="${s//$'\n'/ }"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="$(printf '%s' "$s" | tr -d '\000-\010\013\014\016-\037\177')"; printf '%s' "$s"; }
 
 usage() {
     cat <<EOF
@@ -221,11 +221,9 @@ if has_starttls and not implicit:
 
 def verb_enabled(verb):
     send(s,"%s root"%verb); r=recv(s); c=code(r)
-    # 5xx with "not implemented/disabled" => disabled; 250/251/252/550-user => enabled verb
-    if c in ("500","502","252") :
-        return "disabled" if c in ("500","502") else "enabled"
-    if c.startswith("2") or c=="550" or c=="551" or c=="553":
-        return "enabled"
+    if c in ("500","502"): return "disabled"          # not implemented
+    if c == "252": return "inconclusive"              # "cannot VRFY, will accept" — reveals nothing
+    if c in ("250","251","550","551","553"): return "enabled"  # verb processed (user known or not)
     return "unknown"
 
 if action=="probe":
@@ -254,10 +252,10 @@ elif action=="enum":
         if not name or name.startswith("#"): continue
         if method=="VRFY":
             send(s,"VRFY %s"%name); r=recv(s); c=code(r)
-            if c in ("250","251","252"): out("USER_FOUND",name)
+            if c in ("250","251"): out("USER_FOUND",name)
         elif method=="EXPN":
             send(s,"EXPN %s"%name); r=recv(s); c=code(r)
-            if c in ("250","251","252"): out("USER_FOUND",name)
+            if c in ("250","251"): out("USER_FOUND",name)
         else:  # RCPT
             send(s,"MAIL FROM:<%s>"%rfrom); recv(s)
             send(s,"RCPT TO:<%s@%s>"%(name,dom)); r=recv(s); c=code(r)
@@ -365,11 +363,18 @@ flag_mta_cves() {  # <banner-string>
         echo "$b" | grep -qiE 'opensmtpd[ _]?6\.(4|5|6)' && \
             PROBLEMS+=("OpenSMTPD ${v}: 6.4-6.6 range — CVE-2020-7247 unauth RCE (CISA KEV); verify with cve-lookup")
     fi
-    # Postfix / Sendmail SMTP smuggling — CVE-2023-51764 / CVE-2023-51765 (config-dependent)
-    echo "$b" | grep -qiE 'postfix' && \
-        PROBLEMS+=("Postfix detected: check SMTP-smuggling exposure CVE-2023-51764 (<=3.8.4, config-dependent)")
-    echo "$b" | grep -qiE 'sendmail' && \
-        PROBLEMS+=("Sendmail detected: check SMTP-smuggling exposure CVE-2023-51765 (<8.18)")
+    # Postfix / Sendmail SMTP smuggling — flag ONLY a disclosed vulnerable version
+    # (CVE-2023-51764 Postfix <=3.8.4 / CVE-2023-51765 Sendmail <8.18), so a
+    # patched or version-hidden MTA is not flagged (version-gated like Exim above).
+    local pfv smv
+    pfv="$(echo "$b" | grep -oiE 'postfix[ _/(]*[0-9]+\.[0-9]+(\.[0-9]+)?' | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
+    if [[ -n "$pfv" && "$(printf '%s\n3.8.4\n' "$pfv" | sort -V | head -1)" == "$pfv" ]]; then
+        PROBLEMS+=("Postfix ${pfv}: SMTP smuggling CVE-2023-51764 (<=3.8.4, config-dependent); verify with cve-lookup")
+    fi
+    smv="$(echo "$b" | grep -oiE 'sendmail[ _/]*[0-9]+\.[0-9]+(\.[0-9]+)?' | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)"
+    if [[ -n "$smv" && "$smv" != "8.18" && "$(printf '%s\n8.18\n' "$smv" | sort -V | head -1)" == "$smv" ]]; then
+        PROBLEMS+=("Sendmail ${smv}: SMTP smuggling CVE-2023-51765 (<8.18); verify with cve-lookup")
+    fi
 }
 
 # ---- nmap NSE engine --------------------------------------------------------
@@ -414,7 +419,7 @@ enum_users_native() {  # <host> <port>  -> prints found users, one per line
         while IFS= read -r u; do
             u="${u%%#*}"; u="${u//[[:space:]]/}"; [[ -z "$u" ]] && continue
             swaks --server "$host:$port" --quit-after "$ENUM_METHOD" --"${ENUM_METHOD,,}" "$u" 2>/dev/null \
-                | grep -qE '^<-  25[012]' && echo "$u"
+                | grep -qE '^<-  25[01]' && echo "$u"
         done < "$ENUM_FILE"
     else
         python3 -I -c "$SMTP_PY" "$host" "$port" "$TIMEOUT" enum "$DO_RELAY" "$RELAY_FROM" "$RELAY_TO" "$ENUM_METHOD" \

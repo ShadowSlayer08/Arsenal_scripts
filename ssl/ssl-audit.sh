@@ -132,7 +132,7 @@ to_epoch() {  # <date string from openssl, e.g. "Jun  1 12:00:00 2026 GMT">
 now_epoch() { date +%s; }
 
 # JSON string escape
-jesc() { local s="${1//$'\r'/}"; s="${s//$'\t'/ }"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/ }"; printf '%s' "$s"; }
+jesc()    { local s="${1//$'\r'/}"; s="${s//$'\t'/ }"; s="${s//$'\n'/ }"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="$(printf '%s' "$s" | tr -d '\000-\010\013\014\016-\037\177')"; printf '%s' "$s"; }
 
 # ----------------------------------------------------------- vuln probing ----
 # true if a VULNERABLE verdict appears in the NSE block headed by $2 within $1

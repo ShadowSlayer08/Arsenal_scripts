@@ -59,7 +59,7 @@ err()     { printf '%s[x]%s %s\n'  "${C_R}"   "${C_RST}" "$*"; }
 field()   { printf '    %s%-16s%s %s\n' "${C_DIM}" "$1" "${C_RST}" "$2"; }
 section() { printf '\n%s%s== %s ==%s\n' "${C_BOLD}" "${C_C}" "$*" "${C_RST}"; }
 have()    { command -v "$1" >/dev/null 2>&1; }
-jesc()    { local s="${1//$'\r'/}"; s="${s//$'\t'/ }"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/ }"; printf '%s' "$s"; }
+jesc()    { local s="${1//$'\r'/}"; s="${s//$'\t'/ }"; s="${s//$'\n'/ }"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="$(printf '%s' "$s" | tr -d '\000-\010\013\014\016-\037\177')"; printf '%s' "$s"; }
 
 usage() {
     cat <<EOF
@@ -336,15 +336,20 @@ flag_sysdescr_cves() {  # <sysdescr> <rw_present:0/1>
 
 # ---- opt-in writable-community probe (no-op SET, needs native snmpset) ------
 write_test() {  # <host> <port> <comma-communities> -> echoes RW community or ""
-    local host="$1" port="$2" comms="$3" c cur
+    local host="$1" port="$2" comms="$3" c cur ver
     have snmpset || { PROBLEMS+=("--write-test requested but snmpset (net-snmp) not installed; skipped"); return; }
+    have snmpget || { PROBLEMS+=("--write-test requested but snmpget (net-snmp) not installed; skipped"); return; }
     IFS=',' read -ra carr <<<"$comms"
     for c in "${carr[@]}"; do
         [[ -z "$c" ]] && continue
-        cur="$(snmpget -v2c -c "$c" -Ovq -t "$TIMEOUT" -r0 "$host":"$port" 1.3.6.1.2.1.1.6.0 2>/dev/null)"
-        [[ -z "$cur" ]] && cur="$(snmpget -v1 -c "$c" -Ovq -t "$TIMEOUT" -r0 "$host":"$port" 1.3.6.1.2.1.1.6.0 2>/dev/null)"
-        # write sysLocation back to its own value (no state change)
-        if snmpset -v2c -c "$c" -t "$TIMEOUT" -r0 "$host":"$port" 1.3.6.1.2.1.1.6.0 s "${cur:- }" >/dev/null 2>&1; then
+        # read sysLocation on v2c then v1, remembering which version answered
+        cur="$(snmpget -v2c -c "$c" -Ovq -t "$TIMEOUT" -r0 "$host":"$port" 1.3.6.1.2.1.1.6.0 2>/dev/null)"; ver="2c"
+        if [[ -z "$cur" ]]; then cur="$(snmpget -v1 -c "$c" -Ovq -t "$TIMEOUT" -r0 "$host":"$port" 1.3.6.1.2.1.1.6.0 2>/dev/null)"; ver="1"; fi
+        # NEVER substitute a value: if the GET returned nothing, writing would
+        # mutate device state (reviewer finding), so skip this community.
+        [[ -z "$cur" ]] && continue
+        # write sysLocation back to its own value on the version that answered (no state change)
+        if snmpset "-v${ver}" -c "$c" -t "$TIMEOUT" -r0 "$host":"$port" 1.3.6.1.2.1.1.6.0 s "$cur" >/dev/null 2>&1; then
             echo "$c"; return
         fi
     done
@@ -408,7 +413,9 @@ audit_target() {
     fi
 
     [[ -n "$sysdescr" ]] && flag_sysdescr_cves "$sysdescr" "$([[ -n "$rw" ]] && echo 1 || echo 0)"
-    [[ -n "$v3" ]] || PROBLEMS+=("SNMPv3 not detected — only unauthenticated v1/v2c available")
+    # only the python3 engine actually probes for v3 — the nmap path never sets
+    # it, so don't claim "v3 not detected" when we never looked (reviewer finding)
+    [[ "$ENGINE" == "python3" && -z "$v3" ]] && PROBLEMS+=("SNMPv3 not detected — only unauthenticated v1/v2c available")
 
     [[ ${#PROBLEMS[@]} -gt 0 ]] && EXIT_CODE=1
 

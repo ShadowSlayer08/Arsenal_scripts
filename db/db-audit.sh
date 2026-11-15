@@ -364,19 +364,28 @@ def audit_redis():
                     facts["config_file"] = ln.split(":", 1)[1].strip()
                 elif ln.startswith("executable:"):
                     facts["executable"] = ln.split(":", 1)[1].strip()
+        config_readable = False
         for key in ("requirepass", "protected-mode", "bind", "dir"):
             cg = redis_cmd(f, s, "CONFIG GET %s" % key)
-            if cg and cg[0] == "*" and isinstance(cg[1], list) and len(cg[1]) >= 2 and cg[1][1]:
-                facts["config_" + key] = cg[1][1][1]
-        if facts.get("config_requirepass", "") == "":
-            add("critical", "redis: requirepass is empty")
-        if facts.get("config_protected-mode", "") == "no":
-            add("high", "redis: protected-mode disabled")
-        b = facts.get("config_bind", "")
-        if b == "" or "0.0.0.0" in b or "*" in b or "::" == b:
-            add("high", "redis: listening on all interfaces (bind=%r)" % b)
-        add("high", "redis: CONFIG command enabled -> CONFIG SET dir/dbfilename + SAVE "
-                    "RCE chain possible; rename-command/ACL it")
+            if cg and cg[0] == "*" and isinstance(cg[1], list) and len(cg[1]) >= 2:
+                config_readable = True
+                facts["config_" + key] = cg[1][1][1] if cg[1][1] else ""
+        # Only assert bind/requirepass/CONFIG findings when CONFIG GET actually
+        # answered. If it was renamed/disabled (rename-command CONFIG "") every
+        # GET errors and a missing fact must NOT be read as a confirmed value.
+        if config_readable:
+            if facts.get("config_requirepass", "") == "":
+                add("critical", "redis: requirepass is empty")
+            if facts.get("config_protected-mode", "") == "no":
+                add("high", "redis: protected-mode disabled")
+            b = facts.get("config_bind", "")
+            if b == "" or "0.0.0.0" in b or "*" in b or "::" == b:
+                add("high", "redis: listening on all interfaces (bind=%r)" % b)
+            add("high", "redis: CONFIG command enabled -> CONFIG SET dir/dbfilename + SAVE "
+                        "RCE chain possible; rename-command/ACL it")
+        else:
+            add("info", "redis: CONFIG appears renamed/disabled (good hardening) - "
+                        "bind/requirepass not readable")
         if ALLOW_WRITE:
             canary = "__dbaudit_%d__" % int(time.time())
             w = redis_cmd(f, s, "SET %s 1" % canary)
