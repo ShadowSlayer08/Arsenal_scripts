@@ -868,12 +868,16 @@ resolve_target() {
         hostport="$raw"
     fi
     hostport="${hostport%/}"
-    if [[ "$hostport" == *:* ]]; then
-        host="${hostport%%:*}"
-        port="${hostport##*:}"
+    # IPv6-aware: [addr]:port, bracketed [addr], bare IPv6 (>=2 colons), or host:port
+    if [[ "$hostport" == \[*\]* ]]; then
+        host="${hostport#\[}"; host="${host%%\]*}"
+        local rest="${hostport##*\]}"; port="${rest#:}"; [[ "$port" == "$rest" ]] && port=""
+    elif [[ "$hostport" == *:*:* ]]; then
+        host="$hostport"; port=""
+    elif [[ "$hostport" == *:* ]]; then
+        host="${hostport%:*}"; port="${hostport##*:}"
     else
-        host="$hostport"
-        port=""
+        host="$hostport"; port=""
     fi
 
     # engine: scheme > --type > port map > nmap -sV guess

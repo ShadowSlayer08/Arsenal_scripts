@@ -358,8 +358,14 @@ write_test() {  # <host> <port> <comma-communities> -> echoes RW community or ""
 # ------------------------------------------------------------------- audit --
 audit_target() {
     local target="$1" host port
-    host="${target%%:*}"
-    if [[ "$target" == *:* ]]; then port="${target##*:}"; else port="${PORT_DEFAULT}"; fi
+    # IPv6-aware host[:port] parse: [addr]:port, bare IPv6 (>=2 colons), or host:port
+    local rest
+    if [[ "$target" == \[*\]* ]]; then
+        host="${target#\[}"; host="${host%%\]*}"; rest="${target##*\]}"
+        port="${rest#:}"; [[ "$port" == "$rest" ]] && port="${PORT_DEFAULT}"
+    elif [[ "$target" == *:*:* ]]; then host="$target"; port="${PORT_DEFAULT}"
+    elif [[ "$target" == *:* ]]; then host="${target%:*}"; port="${target##*:}"
+    else host="$target"; port="${PORT_DEFAULT}"; fi
 
     PROBLEMS=()
     local comms="" ver="" sysdescr="" sysname="" sysloc="" v3="" reachable="true" rw=""
