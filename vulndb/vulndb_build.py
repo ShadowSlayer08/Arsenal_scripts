@@ -162,10 +162,18 @@ def ingest_nvd(conn, mode, value, api_key, timeout, insecure, max_pages):
         elif mode == "cpe":
             params.append("virtualMatchString=" + urllib.request.quote(value))
         url = NVD_URL + "?" + "&".join(params)
-        try:
-            raw = http_get(url, timeout, insecure, headers)
-        except Exception as e:
-            log("  nvd: request failed (%s)" % e)
+        # NVD's keyless public API frequently 503s / times out under load; retry
+        # with backoff (an NVD_API_KEY makes this far more reliable and faster).
+        raw = None; last = None
+        for attempt in range(4):
+            try:
+                raw = http_get(url, timeout, insecure, headers); break
+            except Exception as e:
+                last = e
+                if attempt < 3:
+                    time.sleep((pace if api_key else 15) * (attempt + 1))
+        if raw is None:
+            log("  nvd: request failed after retries (%s) — set NVD_API_KEY for a reliable full import" % last)
             break
         doc = json.loads(raw)
         if total is None:

@@ -32,6 +32,15 @@ NVD_API_KEY=xxxx arsenal vulndb-build --nvd-full
 ```
 Incremental/again: re-run; `--refresh` ignores the local cache and re-fetches.
 
+> **Version→CVE map needs NVD.** The exploit/KEV/EPSS/nuclei layer builds from
+> small index files and is fully offline-capable. The `product+version → CVE`
+> map (the `cve_cpe_match` table) comes only from NVD, whose **keyless** public
+> API aggressively throttles (503 / timeouts) — so for that layer set an
+> `NVD_API_KEY` (free from nvd.nist.gov) and run `--nvd-full`. The builder
+> retries with backoff, but without a key a full import is slow/unreliable.
+> Without it, CVE→exploit and `--cve` lookups still work; only version-matching
+> is unavailable.
+
 ## Look up
 
 ```bash
