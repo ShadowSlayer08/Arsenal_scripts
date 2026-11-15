@@ -20,12 +20,19 @@
 #     ./http-audit.sh -f urls.txt
 #     ./http-audit.sh --json example.com
 #     ./http-audit.sh --no-probe example.com        # skip sensitive-path probes
+#     ./http-audit.sh --methods https://example.com  # + OPTIONS/TRACE method probe
+#     ./http-audit.sh --no-cors example.com          # skip the Origin-reflection check
+#
+#   WAF detection, CSP-weakness analysis and a security.txt check run automatically.
+#   The CORS Origin-reflection check runs by default (one extra GET; --no-cors to skip).
 #
 set -uo pipefail
 
 TIMEOUT=10
 JSON=0
 DO_PROBE=1
+DO_CORS=1            # Origin-reflection check (one extra GET); --no-cors to skip
+DO_METHODS=0         # --methods: OPTIONS listing + TRACE (XST) probe
 UA="arsenal-http-audit/1.0"
 URLS=()
 EXIT_CODE=0
@@ -50,7 +57,7 @@ section() { printf '\n%s%s== %s ==%s\n' "${C_BOLD}" "${C_C}" "$*" "${C_RST}"; }
 have()    { command -v "$1" >/dev/null 2>&1; }
 jesc()    { local s="${1//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/ }"; s="${s//$'\r'/}"; printf '%s' "$s"; }
 
-usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { awk 'NR>1 && /^#/{sub(/^# ?/,"");print;next} NR>1{exit}' "$0"; }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -60,6 +67,9 @@ while [[ $# -gt 0 ]]; do
             shift 2 ;;
         -t|--timeout)  TIMEOUT="${2:?}"; shift 2 ;;
         --no-probe)    DO_PROBE=0; shift ;;
+        --cors)        DO_CORS=1; shift ;;
+        --no-cors)     DO_CORS=0; shift ;;
+        --methods)     DO_METHODS=1; shift ;;
         --json)        JSON=1; shift ;;
         -h|--help)     usage; exit 0 ;;
         -*)            err "unknown option: $1"; usage; exit 2 ;;
@@ -164,6 +174,46 @@ audit_url() {
         fi
     fi
 
+    # --- enrichment: WAF / CSP weaknesses / security.txt / CORS / methods ----
+    local waf="" cors_reflect="false" cors_creds="false" methods_allowed="" sectxt="absent"
+    # WAF — passive, from the headers already fetched (no extra request)
+    if   printf '%s' "$hdrs" | grep -qiE 'cf-ray:|__cfduid|server: *cloudflare'; then waf="Cloudflare"
+    elif printf '%s' "$hdrs" | grep -qiE 'x-sucuri-id|x-sucuri-cache';           then waf="Sucuri"
+    elif printf '%s' "$hdrs" | grep -qiE 'akamaighost|x-akamai';                 then waf="Akamai"
+    elif printf '%s' "$hdrs" | grep -qiE 'incap_ses|x-iinfo|incapsula';          then waf="Imperva Incapsula"
+    elif printf '%s' "$hdrs" | grep -qiE 'barracuda';                            then waf="Barracuda"
+    elif printf '%s' "$hdrs" | grep -qiE 'server: *big-?ip|x-waf-event';         then waf="F5 BIG-IP"
+    fi
+    # CSP weaknesses (free — header already parsed into H[csp])
+    if [[ -n "${H[csp]}" ]]; then
+        echo "${H[csp]}" | grep -qiE "script-src[^;]*'unsafe-inline'" && problems+=("CSP: script-src allows 'unsafe-inline'")
+        echo "${H[csp]}" | grep -qiE "script-src[^;]*'unsafe-eval'"   && problems+=("CSP: script-src allows 'unsafe-eval'")
+        echo "${H[csp]}" | grep -qiE "(script-src|default-src)[^;]*[^a-z-]\*" && problems+=("CSP: wildcard * source in script-src/default-src")
+    fi
+    # security.txt (one GET)
+    [[ "$(curl -sS -o /dev/null -w '%{http_code}' --max-time "$TIMEOUT" -A "$UA" "${scheme}://${host}/.well-known/security.txt" 2>/dev/null)" == "200" ]] && sectxt="present"
+    # CORS: does the app reflect an arbitrary Origin (and allow credentials)?
+    if [[ ${DO_CORS} -eq 1 ]]; then
+        local ch acao acac
+        ch="$(curl -sS -I --max-time "$TIMEOUT" -A "$UA" -H 'Origin: https://evil.arsenal-audit.example' "$url" 2>/dev/null)"
+        acao="$(printf '%s' "$ch" | hget 'Access-Control-Allow-Origin')"
+        acac="$(printf '%s' "$ch" | hget 'Access-Control-Allow-Credentials')"
+        echo "$acac" | grep -qi true && cors_creds="true"
+        if echo "$acao" | grep -qiE 'evil\.arsenal-audit\.example'; then
+            cors_reflect="true"
+            if [[ "$cors_creds" == "true" ]]; then problems+=("CORS: reflects arbitrary Origin AND allows credentials (cross-origin data theft)")
+            else problems+=("CORS: reflects arbitrary Origin (Access-Control-Allow-Origin)"); fi
+        elif [[ "$acao" == "*" && "$cors_creds" == "true" ]]; then
+            problems+=("CORS: wildcard origin with credentials (invalid but risky if honored)")
+        fi
+    fi
+    # HTTP methods (opt-in): OPTIONS listing + TRACE (Cross-Site Tracing)
+    if [[ ${DO_METHODS} -eq 1 ]]; then
+        methods_allowed="$(curl -sS -I -X OPTIONS --max-time "$TIMEOUT" -A "$UA" "$url" 2>/dev/null | hget 'Allow')"
+        echo "$methods_allowed" | grep -qiE 'PUT|DELETE' && problems+=("HTTP methods allowed: ${methods_allowed} (PUT/DELETE write methods)")
+        curl -sS -X TRACE --max-time "$TIMEOUT" -A "$UA" "$url" 2>/dev/null | grep -qiE 'TRACE / HTTP|Method: *TRACE' && problems+=("HTTP TRACE enabled (Cross-Site Tracing / XST)")
+    fi
+
     [[ ${#problems[@]} -gt 0 ]] && EXIT_CODE=1
 
     # --- output ---------------------------------------------------------------
@@ -173,6 +223,9 @@ audit_url() {
             [[ $first -eq 0 ]] && pj+=","; pj+="\"$(jesc "$p")\""; first=0; done
         printf '{"tool":"http-audit","host":"%s","url":"%s","reachable":true,' "$(jesc "$host")" "$(jesc "$url")"
         printf '"status":"%s","server":"%s","http_redirect":"%s",' "$(jesc "$status")" "$(jesc "$server")" "$http_redirect"
+        printf '"waf":"%s","cors_reflects_origin":%s,"cors_allows_credentials":%s,"security_txt":"%s",' \
+            "$(jesc "$waf")" "$cors_reflect" "$cors_creds" "$sectxt"
+        [[ ${DO_METHODS} -eq 1 ]] && printf '"methods_allowed":"%s",' "$(jesc "$methods_allowed")"
         printf '"hsts":"%s","csp":%s,"problems":[%s]}\n' \
             "$(jesc "${H[hsts]}")" "$([[ -n "${H[csp]}" ]] && echo true || echo false)" "$pj"
         return
@@ -189,6 +242,10 @@ audit_url() {
     field "Referrer-Policy"       "${H[ref]:-MISSING}"
     field "Permissions-Policy"    "$([[ -n "${H[perm]}" ]] && echo present || echo MISSING)"
     field "http->https redirect"  "$http_redirect"
+    [[ -n "$waf" ]]              && field "WAF" "$waf"
+    field "security.txt"          "$sectxt"
+    [[ "$cors_reflect" == "true" ]] && field "CORS" "reflects Origin (credentials=$cors_creds)"
+    [[ -n "$methods_allowed" ]]  && field "Methods" "$methods_allowed"
     if [[ ${#problems[@]} -eq 0 ]]; then ok "no issues detected"
     else local p; for p in "${problems[@]}"; do warn "$p"; done; fi
 }
