@@ -22,6 +22,9 @@
 #     ./dns-audit.sh --json example.com
 #     ./dns-audit.sh --dkim-selectors "google,selector1,k1" example.com
 #     ./dns-audit.sh --no-axfr example.com        # skip zone-transfer attempts
+#     ./dns-audit.sh --brute example.com           # brute common subdomains (wildcard-aware)
+#     ./dns-audit.sh --brute -w words.txt example.com
+#     ./dns-audit.sh --passive example.com         # crt.sh certificate-transparency enum (needs net)
 #
 set -uo pipefail
 
@@ -32,6 +35,8 @@ DOMAINS=()
 EXIT_CODE=0
 DKIM_SELECTORS="default,google,selector1,selector2,k1,k2,mail,dkim,s1,s2,smtp,zoho,pm,protonmail,fm1,mandrill,mxvault,dkim1"
 SUBS_FOR_CNAME="www,mail,blog,dev,staging,test,cdn,assets,api,shop,support,portal,autodiscover,m,app"
+DO_BRUTE=0; DO_PASSIVE=0; WORDLIST=""
+BRUTE_WORDS="www,mail,remote,blog,webmail,ns1,ns2,smtp,secure,vpn,api,dev,staging,test,portal,admin,m,shop,ftp,git,gitlab,jenkins,jira,confluence,owa,autodiscover,cpanel,ns,mx,email,cloud,app,apps,beta,demo,dashboard,internal,intranet,corp,ad,dc,db,backup,monitor,grafana,kibana,proxy,gw,status,help,support,cdn,assets,static,img,media,docs,wiki"
 
 if [[ -t 1 && "${NO_COLOR:-}" == "" ]]; then
     C_RST=$'\e[0m'; C_R=$'\e[31m'; C_G=$'\e[32m'; C_Y=$'\e[33m'
@@ -48,7 +53,7 @@ section() { printf '\n%s%s== %s ==%s\n' "${C_BOLD}" "${C_C}" "$*" "${C_RST}"; }
 have()    { command -v "$1" >/dev/null 2>&1; }
 jesc()    { local s="${1//$'\r'/}"; s="${s//$'\t'/ }"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"; s="${s//$'\n'/ }"; printf '%s' "$s"; }
 
-usage() { sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { awk 'NR>1 && /^#/{sub(/^# ?/,"");print;next} NR>1{exit}' "$0"; }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -58,6 +63,9 @@ while [[ $# -gt 0 ]]; do
             shift 2 ;;
         -t|--timeout)        TIMEOUT="${2:?}"; shift 2 ;;
         --dkim-selectors)    DKIM_SELECTORS="${2:?}"; shift 2 ;;
+        --brute)             DO_BRUTE=1; shift ;;
+        -w|--wordlist)       WORDLIST="${2:?}"; DO_BRUTE=1; shift 2 ;;
+        --passive)           DO_PASSIVE=1; shift ;;
         --no-axfr)           DO_AXFR=0; shift ;;
         --json)              JSON=1; shift ;;
         -h|--help)           usage; exit 0 ;;
@@ -188,6 +196,43 @@ dns_query() {
 
 resolves() { [[ -n "$(dns_query A "$1")" || -n "$(dns_query AAAA "$1")" ]]; }
 
+# wildcard IP set (random label); empty when the domain has no wildcard record
+wildcard_ips() { dns_query A "arsenal-wild-${RANDOM}${RANDOM}.$1" | sort -u | paste -sd, -; }
+
+# brute-force subdomains from the wordlist; echo each resolving FQDN (skips the
+# wildcard IP set so a wildcard domain doesn't report every guess as "found")
+brute_subs() {
+    local d="$1" wild="$2" words w a
+    if [[ -n "$WORDLIST" && -r "$WORDLIST" ]]; then
+        words="$(tr ',\t ' '\n\n\n' < "$WORDLIST")"
+    else
+        words="${BRUTE_WORDS//,/$'\n'}"
+    fi
+    while IFS= read -r w; do
+        [[ -z "$w" || "$w" == \#* ]] && continue
+        a="$(dns_query A "${w}.${d}" | sort -u | paste -sd, -)"
+        [[ -z "$a" ]] && continue
+        [[ -n "$wild" && "$a" == "$wild" ]] && continue
+        echo "${w}.${d}"
+    done <<<"$words"
+}
+
+# passive subdomain enumeration via crt.sh certificate transparency (needs net)
+passive_ct() {
+    local d="$1"
+    have curl || return 0
+    curl -s --max-time "$((TIMEOUT*3))" "https://crt.sh/?q=%25.${d}&output=json" 2>/dev/null \
+      | python3 -c 'import sys,json
+try: data=json.load(sys.stdin)
+except Exception: sys.exit(0)
+seen=set()
+for e in data:
+    for nm in str(e.get("name_value","")).split("\n"):
+        nm=nm.strip().lstrip("*.").lower()
+        if nm and "*" not in nm and nm not in seen:
+            seen.add(nm); print(nm)' 2>/dev/null
+}
+
 # takeover-prone CNAME targets (non-exhaustive, DNS-only signal)
 TAKEOVER_RE='github\.io|herokudns|herokuapp|s3.*amazonaws|azurewebsites|cloudfront\.net|ghost\.io|wpengine|fastly\.net|pantheonsite|readthedocs|surge\.sh|bitbucket\.io|zendesk|helpscout|unbounce|desk\.com|cargocollective|statuspage|launchrock|feedpress'
 
@@ -211,6 +256,11 @@ audit_domain() {
     elif (( spf_count > 1 ));         then problems+=("SPF: multiple records (invalid per RFC 7208)")
     elif echo "$spf" | grep -qiE '(^| )\+?all'; then
         echo "$spf" | grep -qiE '[~-]all' || problems+=("SPF: ends in +all/all (permits any sender)")
+    fi
+    # RFC 7208: an SPF record causing >10 DNS-lookup mechanisms is a permerror
+    if [[ -n "$spf" ]]; then
+        local spf_lookups; spf_lookups="$(echo "$spf" | grep -oiE '(^| )(include:|a[: ]|a$|mx[: ]|mx$|ptr|exists:|redirect=)' | wc -l | tr -d ' ')"
+        [[ "${spf_lookups:-0}" =~ ^[0-9]+$ ]] && (( spf_lookups > 10 )) && problems+=("SPF: ${spf_lookups} DNS-lookup mechanisms (>10 = permerror per RFC 7208)")
     fi
 
     # --- DMARC ---------------------------------------------------------------
@@ -270,18 +320,33 @@ audit_domain() {
         [[ ${#axfr_open[@]} -gt 0 ]] && problems+=("AXFR: zone transfer allowed from: ${axfr_open[*]}")
     fi
 
-    # --- dangling CNAME / takeover hints -------------------------------------
-    local dangling=()
+    # --- subdomain discovery (opt-in) + dangling-CNAME / takeover hints -------
+    local discovered=() wildcard="" sub_source="" sub
+    if [[ ${DO_BRUTE} -eq 1 ]]; then
+        wildcard="$(wildcard_ips "$d")"
+        while IFS= read -r sub; do [[ -n "$sub" ]] && discovered+=("$sub"); done < <(brute_subs "$d" "$wildcard")
+        sub_source="brute"
+    fi
+    if [[ ${DO_PASSIVE} -eq 1 ]]; then
+        while IFS= read -r sub; do [[ -n "$sub" && "$sub" == *".$d" ]] && discovered+=("$sub"); done < <(passive_ct "$d")
+        sub_source="${sub_source:+${sub_source}+}ct"
+    fi
+    if [[ ${#discovered[@]} -gt 0 ]]; then
+        mapfile -t discovered < <(printf '%s\n' "${discovered[@]}" | awk 'NF && !seen[$0]++')
+    fi
+
+    local dangling=() candidates=()
     IFS=',' read -ra subs <<<"$SUBS_FOR_CNAME"
-    local s
-    for s in "${subs[@]}"; do
-        [[ -z "$s" ]] && continue
-        local cn; cn="$(dns_query CNAME "${s}.$d" | head -1 | sed 's/\.$//')"
+    for sub in "${subs[@]}"; do [[ -n "$sub" ]] && candidates+=("${sub}.$d"); done
+    for sub in "${discovered[@]:-}"; do [[ -n "$sub" ]] && candidates+=("$sub"); done
+    local fqdn cn
+    for fqdn in "${candidates[@]}"; do
+        cn="$(dns_query CNAME "$fqdn" | head -1 | sed 's/\.$//')"
         [[ -z "$cn" ]] && continue
         if echo "$cn" | grep -qiE "$TAKEOVER_RE"; then
-            resolves "$cn" || dangling+=("${s}.$d -> ${cn} (unclaimed service?)")
+            resolves "$cn" || dangling+=("${fqdn} -> ${cn} (unclaimed service?)")
         elif ! resolves "$cn"; then
-            dangling+=("${s}.$d -> ${cn} (target does not resolve)")
+            dangling+=("${fqdn} -> ${cn} (target does not resolve)")
         fi
     done
     [[ ${#dangling[@]} -gt 0 ]] && problems+=("dangling CNAME (takeover risk): ${dangling[*]}")
@@ -296,9 +361,14 @@ audit_domain() {
         printf '{"tool":"dns-audit","host":"%s",' "$(jesc "$d")"
         printf '"a":"%s","ns":"%s","mx":"%s","spf":"%s","dmarc":"%s",' \
             "$(jesc "$a")" "$(jesc "$ns")" "$(jesc "$mx")" "$(jesc "$spf")" "$(jesc "$dmarc")"
-        printf '"dkim_selectors":"%s","caa":"%s","dnssec":"%s","axfr_open":"%s","problems":[%s]}\n' \
+        local sj="" sf=1 sd
+        for sd in "${discovered[@]:-}"; do [[ -z "$sd" ]] && continue
+            [[ $sf -eq 0 ]] && sj+=","; sj+="\"$(jesc "$sd")\""; sf=0; done
+        printf '"dkim_selectors":"%s","caa":"%s","dnssec":"%s","axfr_open":"%s",' \
             "$(jesc "$(IFS=,; echo "${dkim_found[*]:-}")")" "$(jesc "$caa")" "$dnssec" \
-            "$(jesc "$(IFS=,; echo "${axfr_open[*]:-}")")" "$pj"
+            "$(jesc "$(IFS=,; echo "${axfr_open[*]:-}")")"
+        printf '"subdomains":[%s],"subdomains_source":"%s","wildcard":"%s","problems":[%s]}\n' \
+            "$sj" "$sub_source" "$(jesc "$wildcard")" "$pj"
         return
     fi
 
@@ -313,6 +383,8 @@ audit_domain() {
     field "DKIM"    "$dkim_disp"
     field "CAA"     "${caa:-none}"
     field "DNSSEC"  "$dnssec"
+    [[ -n "$wildcard" ]] && field "Wildcard" "$wildcard"
+    [[ ${#discovered[@]} -gt 0 ]] && field "Subdomains" "${#discovered[@]} found (${sub_source}): $(IFS=,; echo "${discovered[*]:0:12}")"
     if [[ ${#problems[@]} -eq 0 ]]; then ok "no issues detected"
     else local p; for p in "${problems[@]}"; do warn "$p"; done; fi
 }
