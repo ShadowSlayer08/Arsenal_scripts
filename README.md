@@ -1,98 +1,122 @@
-# Arsenal_scripts
+<h1 align="center">⚒ Arsenal</h1>
 
-A grab-bag of **standalone shell scripts** that help with **manual** pentesting,
-VAPT, red teaming, and configuration review. Each one does a single job, runs by
-hand, and is useful on its own — copy one onto a box and run it.
+<p align="center"><b><i>The forge. Where the field tools are made and wielded.</i></b></p>
+
+<p align="center">
+Hand-run scripts for manual pentesting, VAPT, red teaming and config review —
+the reconnaissance and analysis muscle that does the work in the field and
+carries what it learns back to its mentors, <b>Mimir</b> and <b>Crucible</b>.
+</p>
+
+<p align="center">
+  <img alt="shellcheck" src="https://img.shields.io/badge/shellcheck-clean-3fd07d?style=flat-square">
+  <img alt="authorized use only" src="https://img.shields.io/badge/authorized%20use%20only-ffa53b?style=flat-square">
+  <img alt="license" src="https://img.shields.io/badge/license-MIT-8b91a3?style=flat-square">
+</p>
 
 > ⚠️ **Authorized use only.** For your own systems, lab/CTF environments, or
-> engagements where you have **explicit written permission**. The installer
-> stages offensive tooling; the analysers make ordinary, read-only connections.
-> You are responsible for how you use them.
+> engagements where you have **explicit written permission**. The analysers make
+> ordinary, read-only connections; intrusive checks are opt-in; the installer
+> stages offensive tooling. You are responsible for how you use them.
 
-> **Scope.** These are hand-run helpers, not a platform. Engagement
-> orchestration, methodology and staging are intentionally **out of scope** —
-> that's what [Mimir](https://github.com/ShadowSlayer08/Mimir) is for. Reach for
-> these when you want a quick, focused answer during manual testing.
+---
+
+## The trinity — Arsenal, the protégé
+
+Three tools, one craft. Arsenal is the **protégé** of two heroes, and it knows its place:
+
+- ᛗ **[Mimir](https://github.com/ShadowSlayer08/Mimir)** — the keeper of the well of
+  knowledge. A pentest **orchestration engine**: it stages an engagement end-to-end
+  (scope → scan → correlate → attack-path → runbook) and hands the operator a plan.
+- ⚔️ **[Crucible](https://github.com/ShadowSlayer08/Crucible)** — trial by fire for AI.
+  Black-box **offensive testing of LLMs/agents**, mapped to ATLAS / OWASP-LLM / NIST.
+
+**Arsenal is neither.** It doesn't orchestrate and it doesn't judge models — it is
+the hands at the anvil: each script does one job, run by hand, and emits a shared
+`--json` finding. Those findings become **the knowledge Arsenal carries up the
+mountain** — through the [vuln DB](vulndb/), the [red-ribbon graph](graph/), and the
+web console's [exchange bundle](docs/integration.md):
+
+```
+   analysers --json ─┐
+   webscan-lite/heavy ├─► vuln DB (CVE→exploit)  ─┐
+   vulndb lookups ────┘   red-ribbon graph.json  ─┼─► Mimir   (scan/correlate/stage)
+                          exchange bundle ─────────┴─► Crucible (infra-recon around an AI)
+```
+
+How that handoff works: **[docs/integration.md](docs/integration.md)**.
 
 ---
 
 ## The scripts
 
+### Service & config analysers (read-only)
 | Script | Does |
 | ------ | ---- |
-| [`ssl/ssl-audit.sh`](ssl/ssl-audit.sh) | TLS posture + certificate analysis: chain, SANs, expiry, key (RSA/EC aware), protocols SSLv3–TLS1.3, STARTTLS. |
-| [`ssh/ssh-audit.sh`](ssh/ssh-audit.sh) | SSH server probe (banner, host-key fingerprints, offered KEX/cipher/MAC/host-key algos) and local `sshd_config` hardening review. |
-| [`dns/dns-audit.sh`](dns/dns-audit.sh) | DNS hygiene: SPF/DKIM/DMARC/CAA/DNSSEC, AXFR zone-transfer test, dangling-CNAME / takeover hints. |
-| [`http/http-audit.sh`](http/http-audit.sh) | HTTP security headers, cookie flags, http→https enforcement, version disclosure, sensitive-path checks. |
-| [`smb/smb-audit.sh`](smb/smb-audit.sh) | SMB/NetBIOS/RPC: dialects + SMBv1, signing (relay risk), null/guest sessions, anon-readable/writable shares, OS/domain, RID/user enum. |
-| [`ldap/ldap-audit.sh`](ldap/ldap-audit.sh) | LDAP anonymous bind, rootDSE / naming contexts, domain functional level, anon user/group enum, LDAPS/StartTLS. |
-| [`kerberos/kerb-audit.sh`](kerberos/kerb-audit.sh) | Kerberos: AS-REP-roastable users, SPN discovery, pre-auth status (user/cred checks are opt-in). |
-| [`smtp/mail-audit.sh`](smtp/mail-audit.sh) | SMTP banner/version, STARTTLS + cert, **safe** non-delivering open-relay probe, VRFY/EXPN; user-enum is opt-in. |
-| [`snmp/snmp-audit.sh`](snmp/snmp-audit.sh) | SNMP community guessing (small default list), v1/v2c/v3, sysDescr; writable-community test is opt-in. |
-| [`ftp/ftp-audit.sh`](ftp/ftp-audit.sh) | FTP banner, anonymous login, FTPS/AUTH TLS, bounce (FXP); backdoor checks are opt-in. |
-| [`db/db-audit.sh`](db/db-audit.sh) | Exposed databases (Redis/MongoDB/Elasticsearch/MSSQL/MySQL/Postgres): no-auth / default-cred / TLS, read-only (writes need `--unsafe`). |
-| [`vuln/cve-lookup.sh`](vuln/cve-lookup.sh) | Look up CVEs for a service `product + version` (or `nmap -sV` output) via NVD, CVSS-sorted (online). |
-| [`vulndb/`](vulndb/) | **Offline CVE + public-exploit knowledge base** (SQLite). `vulndb-build` ingests NVD/KEV/EPSS/Exploit-DB/Metasploit/nuclei; `vulndb` maps `product+version → CVE → exploit`, version-range aware. Shared read-only by **Mimir & Crucible**. See [vulndb/README.md](vulndb/README.md). |
-| [`installers/kali-arsenal.sh`](installers/kali-arsenal.sh) | Idempotent red-team tooling installer (`/opt/tools` + `~/tools`), engagement profiles, `--list`/`--health`/`--dry-run`. |
+| [`ssl/ssl-audit.sh`](ssl/ssl-audit.sh) | TLS posture + cert analysis; `--vuln` adds safe Heartbleed/CCS/POODLE/Logjam/SWEET32/ROBOT/ROCA probes → CVE refs. |
+| [`ssh/ssh-audit.sh`](ssh/ssh-audit.sh) | SSH probe (banner, host-key fingerprints, weak KEX/cipher/MAC) + local `sshd_config` hardening review. |
+| [`dns/dns-audit.sh`](dns/dns-audit.sh) | SPF/DKIM/DMARC/CAA/DNSSEC, AXFR, takeover hints; `--brute`/`--passive` subdomain discovery. |
+| [`http/http-audit.sh`](http/http-audit.sh) | Security headers, cookies, http→https, WAF/CSP/CORS, `--methods`. |
+| [`smb/smb-audit.sh`](smb/smb-audit.sh) | SMBv1, signing, null/guest, anon shares, OS/domain, RID/user enum. |
+| [`ldap/ldap-audit.sh`](ldap/ldap-audit.sh) | Anon bind, rootDSE/naming contexts, LDAPS; signing probe is opt-in. |
+| [`kerberos/kerb-audit.sh`](kerberos/kerb-audit.sh) | AS-REP roast, SPN discovery, pre-auth (user/cred checks opt-in). |
+| [`smtp/mail-audit.sh`](smtp/mail-audit.sh) | STARTTLS, safe open-relay, VRFY/EXPN; user-enum opt-in. |
+| [`snmp/snmp-audit.sh`](snmp/snmp-audit.sh) | v1/v2c/v3, sysDescr; community guessing opt-in (`--guess`). |
+| [`ftp/ftp-audit.sh`](ftp/ftp-audit.sh) | Anon login, FTPS/AUTH TLS, bounce; backdoor checks opt-in. |
+| [`db/db-audit.sh`](db/db-audit.sh) | Exposed DBs (Redis/Mongo/ES/MSSQL/MySQL/PG): no-auth / default-cred / TLS. |
 
-Small conveniences, entirely optional — ignore them and the scripts above still
-work standalone:
-
+### Appsec — web application scanners
 | Script | Does |
 | ------ | ---- |
-| [`bin/arsenal`](bin/arsenal) | Launcher so you can type `arsenal ssl …` instead of the full path. `arsenal list`, `arsenal help <tool>`. |
-| [`engage/scope-guard.sh`](engage/scope-guard.sh) | A target allowlist you can check a host against before you touch it (`check` / `filter`), so a stray host in a list doesn't get hit. |
-| [`lib/report.sh`](lib/report.sh) | Collate the `--json` output of the analysers into one Markdown / CSV / text table when you're writing up. |
-| [`graph/graph-build.sh`](graph/graph-build.sh) | Weave analyser `--json` + the vuln DB into one knowledge graph (Finding→CVE→Exploit→CWE), enriched from the shared DB and ingestible by graphify / Mimir / Crucible. See [graph/README.md](graph/README.md). |
+| [`appsec/webscan-lite.sh`](appsec/webscan-lite.sh) | **Lite:** fast, passive posture scan — headers, cookies, CORS, tech fingerprint, page/login/forms, mixed content, a few well-known paths. A handful of requests. |
+| [`appsec/webscan-heavy.sh`](appsec/webscan-heavy.sh) | **Heavy:** same-origin crawl + form/parameter/JS-endpoint extraction + content discovery, and opt-in (`--active`) **safe** injection *indicators* (reflected-marker XSS, SQL-error signature) — detection only, never exploitation. |
 
-Each analyser prints readable output or `--json` (for your own notes or
-scripting), and exits `0` clean / `1` finding(s) / `2` usage error.
+### Knowledge & intel
+| Script | Does |
+| ------ | ---- |
+| [`vuln/cve-lookup.sh`](vuln/cve-lookup.sh) | Online NVD lookup: service `product+version` (or `nmap -sV`) → CVEs, CVSS-sorted. |
+| [`vulndb/`](vulndb/) | **Offline CVE + public-exploit DB** (SQLite): `product+version → CVE → exploit`, version-range aware, EPSS/KEV. Shared read-only by Mimir & Crucible. See [vulndb/README.md](vulndb/README.md). |
+| [`graph/graph-build.sh`](graph/graph-build.sh) | The **red ribbon**: analyser `--json` + vuln DB → one knowledge graph (Finding→CVE→Exploit→CWE). See [graph/README.md](graph/README.md). |
+| [`installers/kali-arsenal.sh`](installers/kali-arsenal.sh) | Red-team tooling installer (`/opt/tools` + `~/tools`), profiles, `--list`/`--health`/`--dry-run`. |
 
----
+### The console & glue (optional)
+| Script | Does |
+| ------ | ---- |
+| [`webapp/`](webapp/) | **Arsenal Console** — a tiny local web GUI (`arsenal webapp`): run the analysers from a browser, collate findings, build a report, and export the engagement bundle to Mimir & Crucible. Localhost-only; argv-sandboxed. |
+| [`bin/arsenal`](bin/arsenal) | Launcher: `arsenal <tool> …`, `arsenal list`, `arsenal help <tool>`. |
+| [`engage/scope-guard.sh`](engage/scope-guard.sh) | Target allowlist — `check` / `filter` so a stray host never gets hit. |
+| [`lib/report.sh`](lib/report.sh) | Collate `--json` output into one Markdown / CSV / text report. |
 
-## Requirements
-
-- **Common:** `bash` 4+, coreutils.
-- **ssl:** `openssl` (optional `nmap` for `--ciphers`).
-- **ssh:** `openssh-client` (optional `nmap`).
-- **dns:** `dig` preferred; falls back to `python3` (built-in resolver) or `nslookup`.
-- **http:** `curl`.
-- **cve:** `curl` + `python3`; optional `NVD_API_KEY` env var raises the rate limit.
-- **report:** `python3`.
-- **installer:** a Debian/Kali box with `apt`.
+Every analyser prints readable output or `--json`, and exits `0` clean / `1` finding(s) / `2` usage error.
 
 ---
 
 ## Quick reference
 
 ```bash
-ssl/ssl-audit.sh   example.com[:443] | -f hosts.txt | --json | --starttls smtp host:25
-ssh/ssh-audit.sh   host[:22]         | --local [--config FILE] | --json
-dns/dns-audit.sh   example.com       | -f domains.txt | --json | --no-axfr
-http/http-audit.sh https://host/path | -f urls.txt | --json | --no-probe
-vuln/cve-lookup.sh openssh 9.2       | --cpe "cpe:2.3:a:openbsd:openssh:9.2:*:*:*:*:*:*:*" | --from-nmap
+arsenal list                                   # every tool
+arsenal webapp                                 # the local console at http://127.0.0.1:8733
+arsenal ssl   --vuln example.com               # TLS posture + safe vuln probes
+arsenal webscan-lite  https://app.example.com  # fast appsec posture
+arsenal webscan-heavy --active https://app.example.com   # deep crawl + safe injection indicators
+arsenal vulndb openssh 9.2                     # offline CVE + public exploits
+{ arsenal ssl --json h; arsenal webscan-lite --json https://h; } | arsenal graph --out ./g
 ```
 
 Run any script with `--help` (or `arsenal help <tool>`) for its full options.
 
-Example config review during an engagement:
+## Requirements
 
-```bash
-ssh/ssh-audit.sh --local                      # review this box's sshd_config
-ssl/ssl-audit.sh --json internal.example > tls.json   # keep the raw result for your notes
-```
+`bash` 4+ and coreutils everywhere; then per tool: `openssl` (ssl), `openssh-client`
+(ssh), `curl`+`python3` (http/appsec/cve/vulndb/graph/webapp), `dig` preferred for
+dns, `nmap` as the default backend for smb/ldap/kerberos/smtp/snmp/ftp/db. Optional
+`NVD_API_KEY` for a reliable full vuln-DB build.
 
----
-
-## Roadmap
-
-Ideas for more helper scripts live in [`docs/roadmap.md`](docs/roadmap.md).
-
-## Contributing / CI
+## CI
 
 Every push runs `shellcheck -S warning` and `bash -n` on all `*.sh`
-([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). Keep scripts
-shellcheck-clean and self-contained.
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). Roadmap in
+[`docs/roadmap.md`](docs/roadmap.md).
 
 ## License
 

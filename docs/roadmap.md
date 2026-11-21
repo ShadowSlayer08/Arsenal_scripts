@@ -24,6 +24,8 @@ installer, authorized-use only, human + `--json` output, exit `0`/`1`/`2`.
 - `vuln/cve-lookup.sh` — service version → CVEs (NVD, CPE matching).
 - `vulndb/` — offline CVE+exploit knowledge base (shared with Mimir/Crucible).
 - `graph/` — the "red ribbon" knowledge-graph exporter (analyser --json + vuln DB → nodes/edges/graph.json; graphify/Mimir/Crucible ingestible).
+- `appsec/webscan-lite.sh` + `appsec/webscan-heavy.sh` — web-app scanners (passive posture; deep crawl + discovery + safe injection indicators).
+- `webapp/` — the Arsenal Console (local web GUI) that runs the tools and exports an engagement bundle to Mimir & Crucible; see `docs/integration.md`.
 
 ## Next — analysers (read-only)
 - **`tls/cert-expiry-monitor.sh`** — fan `ssl-audit --json` over a host list, emit only soon-to-expire/weak certs (cron + alert).
