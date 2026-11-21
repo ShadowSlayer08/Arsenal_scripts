@@ -16,6 +16,9 @@ vulndb/*.cache/
 __pycache__/
 *.pyc
 
+# Web-app exchange output (engagement bundles; rebuild per run)
+webapp/exchange/
+
 # Logs & scratch
 *.log
 *.tmp

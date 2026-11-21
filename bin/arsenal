@@ -39,6 +39,7 @@ declare -A TOOLS=(
     [vulndb]="vulndb/vulndb-lookup.sh"
     [vulndb-build]="vulndb/vulndb-build.sh"
     [graph]="graph/graph-build.sh"
+    [webapp]="webapp/webapp.sh"
     [scope]="engage/scope-guard.sh"
     [report]="lib/report.sh"
     [install]="installers/kali-arsenal.sh"
@@ -63,6 +64,7 @@ declare -A DESC=(
     [vulndb]="offline CVE+exploit lookup by product+version"
     [vulndb-build]="build/update the offline CVE+exploit DB"
     [graph]="weave --json findings + vuln DB into a knowledge graph"
+    [webapp]="launch the local web console (micro GUI; feeds Mimir/Crucible)"
     [scope]="engagement scope allowlist & target gatekeeper"
     [report]="build a unified report from --json output"
     [install]="red-team tooling installer (/opt + ~/tools)"
@@ -79,7 +81,7 @@ version() { echo "arsenal toolkit — $ROOT"; }
 list_tools() {
     printf '%sarsenal%s — available tools:\n\n' "$C_BOLD" "$C_RST"
     local k
-    for k in ssl ssh dns http smb ldap kerberos smtp snmp ftp db webscan-lite webscan-heavy cve vulndb vulndb-build graph scope report install; do
+    for k in ssl ssh dns http smb ldap kerberos smtp snmp ftp db webscan-lite webscan-heavy cve vulndb vulndb-build graph webapp scope report install; do
         local path="$ROOT/${TOOLS[$k]}"
         printf '  %s%-8s%s %s\n' "$C_C" "$k" "$C_RST" "${DESC[$k]}"
         [[ -f "$path" ]] || printf '           %s(missing: %s)%s\n' "$C_DIM" "${TOOLS[$k]}" "$C_RST"
